@@ -31,17 +31,17 @@ def create_application() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
     )
-    # In development, allow local frontend; in production use debug flag or set origins explicitly
-    cors_origins = (
-        ["*"]
-        if settings.debug
-        else [
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
+    # CORS: allow localhost in dev; in production use CORS_ORIGINS env (comma-separated)
+    if settings.debug:
+        cors_origins = ["*"]
+    elif settings.environment == "development":
+        cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    else:
+        # Production: Vercel frontend + any extra from CORS_ORIGINS env
+        cors_origins = [
+            "https://workout-tracker-frontend-gamma.vercel.app",
+            *[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
         ]
-        if settings.environment == "development"
-        else []
-    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
@@ -49,6 +49,15 @@ def create_application() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Health paths for Render / load balancers (root and common custom path)
+    @app.get("/")
+    def root():
+        return {"status": "ok", "message": "Workout Tracker API"}
+
+    @app.get("/saquibhealth")
+    def health_check():
+        return {"status": "ok"}
+
     app.include_router(api_router, prefix=settings.api_v1_prefix)
     return app
 

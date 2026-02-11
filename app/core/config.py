@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     database_pool_size: int = 5
     database_max_overflow: int = 10
 
+    # CORS: comma-separated list of allowed origins in production (e.g. https://your-app.vercel.app)
+    cors_origins: str = ""
+
     def _build_db_url(self, scheme: str = "postgresql", ssl_query: str = "sslmode=require") -> str:
         user = quote_plus(self.database_user)
         password = quote_plus(self.database_password)
