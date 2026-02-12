@@ -17,6 +17,7 @@ from app.schemas.workout import (
     WorkoutReadWithSets,
     WorkoutSetCreate,
     WorkoutSetRead,
+    WorkoutSetUpdate,
     WorkoutUpdate,
 )
 from app.services.pr_detection import detect_pr
@@ -99,8 +100,16 @@ async def update_workout(
         raise HTTPException(status_code=404, detail="Workout not found")
     data = payload.model_dump(exclude_unset=True)
     if "ended_at" in data and data["ended_at"] and workout.started_at and "duration_seconds" not in data:
-        delta = data["ended_at"] - workout.started_at
-        data["duration_seconds"] = int(delta.total_seconds())
+        from datetime import timezone as tz
+        ended = data["ended_at"]
+        started = workout.started_at
+        # Normalize both to tz-aware UTC for safe subtraction
+        if ended.tzinfo is None:
+            ended = ended.replace(tzinfo=tz.utc)
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=tz.utc)
+        delta = ended - started
+        data["duration_seconds"] = max(0, int(delta.total_seconds()))
     for k, v in data.items():
         setattr(workout, k, v)
     await db.flush()
@@ -185,3 +194,41 @@ async def add_set_to_workout(
     await db.flush()
     await db.refresh(set_)
     return set_
+
+
+@router.patch("/{workout_id}/sets/{set_id}", response_model=WorkoutSetRead)
+async def update_set(
+    workout_id: int,
+    set_id: int,
+    payload: WorkoutSetUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update an existing set (weight, reps, duration, notes, label)."""
+    result = await db.execute(
+        select(WorkoutSet).where(WorkoutSet.id == set_id, WorkoutSet.workout_id == workout_id)
+    )
+    set_ = result.scalar_one_or_none()
+    if not set_:
+        raise HTTPException(status_code=404, detail="Set not found")
+    for k, v in payload.model_dump(exclude_unset=True).items():
+        setattr(set_, k, v)
+    await db.flush()
+    await db.refresh(set_)
+    return set_
+
+
+@router.delete("/{workout_id}/sets/{set_id}", status_code=204)
+async def delete_set(
+    workout_id: int,
+    set_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a set from a workout."""
+    result = await db.execute(
+        select(WorkoutSet).where(WorkoutSet.id == set_id, WorkoutSet.workout_id == workout_id)
+    )
+    set_ = result.scalar_one_or_none()
+    if not set_:
+        raise HTTPException(status_code=404, detail="Set not found")
+    await db.delete(set_)
+    return None

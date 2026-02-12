@@ -21,6 +21,14 @@ class WorkoutSetCreate(WorkoutSetBase):
     pass
 
 
+class WorkoutSetUpdate(BaseModel):
+    weight: float | None = None
+    reps: int | None = None
+    duration_seconds: int | None = None
+    notes: str | None = None
+    set_label: SetLabel | None = None
+
+
 class WorkoutSetRead(WorkoutSetBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
