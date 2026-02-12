@@ -1,5 +1,7 @@
 """Workout CRUD endpoints."""
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,11 +32,17 @@ async def list_workouts(
     db: AsyncSession = Depends(get_db),
     skip: int = 0,
     limit: int = 50,
+    from_date: datetime | None = None,
+    to_date: datetime | None = None,
 ):
-    """List workouts (without sets)."""
-    result = await db.execute(
-        select(Workout).order_by(Workout.started_at.desc()).offset(skip).limit(limit)
-    )
+    """List workouts (without sets), optionally filtered by date range."""
+    stmt = select(Workout)
+    if from_date:
+        stmt = stmt.where(Workout.started_at >= from_date)
+    if to_date:
+        stmt = stmt.where(Workout.started_at <= to_date)
+    stmt = stmt.order_by(Workout.started_at.desc()).offset(skip).limit(limit)
+    result = await db.execute(stmt)
     workouts = result.scalars().all()
     return [
         WorkoutRead(

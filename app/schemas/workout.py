@@ -46,6 +46,7 @@ class WorkoutCreate(WorkoutBase):
 
 
 class WorkoutUpdate(BaseModel):
+    started_at: datetime | None = None
     ended_at: datetime | None = None
     duration_seconds: int | None = None
     notes: str | None = None
