@@ -7,6 +7,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.core.enums import PRType, SetLabel
 
 
+class ExerciseRef(BaseModel):
+    """Minimal exercise info for embedding in set responses (id + name only)."""
+
+    id: int
+    name: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class WorkoutSetBase(BaseModel):
     exercise_id: int
     set_order: int = 0
@@ -35,6 +44,7 @@ class WorkoutSetRead(WorkoutSetBase):
     workout_id: int
     is_pr: bool = False
     pr_type: PRType | None = None
+    exercise: ExerciseRef | None = None
 
 
 class WorkoutBase(BaseModel):
