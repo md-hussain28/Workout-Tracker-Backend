@@ -29,7 +29,7 @@ class MuscleGroupChartPoint(BaseModel):
 
 class MuscleGroupTopExercise(BaseModel):
     id: int
-    name: string
+    name: str
     volume: float
     set_count: int
 
