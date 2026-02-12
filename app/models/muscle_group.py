@@ -15,6 +15,7 @@ class MuscleGroup(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
+    color: Mapped[str | None] = mapped_column(String(7), nullable=True)
 
     # Exercises that target this as primary / secondary / tertiary
     exercises_primary: Mapped[list["Exercise"]] = relationship(
