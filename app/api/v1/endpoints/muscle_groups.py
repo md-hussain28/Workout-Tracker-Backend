@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models.muscle_group import MuscleGroup
-from app.schemas.muscle_group import MuscleGroupCreate, MuscleGroupRead, MuscleGroupUpdate
+from app.schemas.muscle_group import MuscleGroupCreate, MuscleGroupRead, MuscleGroupUpdate, MuscleGroupStats
 
 router = APIRouter()
 
