@@ -224,3 +224,206 @@ async def consistency_calendar(
             "tonnage": float(r.tonnage),
         })
     return {"year": year, "month": month, "days": days}
+
+
+@router.get("/volume-history-by-muscle")
+async def volume_history_by_muscle(
+    from_date: datetime | None = None,
+    to_date: datetime | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Daily volume grouped by Primary Muscle Group.
+    Returns: { date: string, muscles: { [muscle_name]: volume } }[]
+    """
+    conditions = []
+    if from_date:
+        conditions.append(Workout.started_at >= from_date)
+    if to_date:
+        conditions.append(Workout.started_at <= to_date)
+        
+    stmt = (
+        select(
+            Workout.started_at,
+            Exercise.primary_muscle_group_id,
+            func.sum(WorkoutSet.weight * WorkoutSet.reps).label("volume")
+        )
+        .join(WorkoutSet, Workout.id == WorkoutSet.workout_id)
+        .join(Exercise, Exercise.id == WorkoutSet.exercise_id)
+        .where(
+            WorkoutSet.weight.isnot(None),
+            WorkoutSet.reps.isnot(None),
+            Exercise.primary_muscle_group_id.isnot(None),
+            *conditions
+        )
+        .group_by(Workout.started_at, Exercise.primary_muscle_group_id)
+        .order_by(Workout.started_at)
+    )
+    
+    result = await db.execute(stmt)
+    rows = result.all()
+    
+    # We also need muscle names
+    from app.models.muscle_group import MuscleGroup
+    mg_result = await db.execute(select(MuscleGroup.id, MuscleGroup.name))
+    mg_map = {row.id: row.name for row in mg_result.all()}
+    
+    # Process into Date -> { muscle: vol }
+    data_by_date: dict[str, dict[str, float]] = {}
+    
+    for r in rows:
+        d = r.started_at.date().isoformat()
+        mg_name = mg_map.get(r.primary_muscle_group_id, "Unknown")
+        vol = float(r.volume or 0)
+        
+        if d not in data_by_date:
+            data_by_date[d] = {"date": d}
+        
+        data_by_date[d][mg_name] = data_by_date[d].get(mg_name, 0.0) + vol
+        
+    return list(data_by_date.values())
+
+
+@router.get("/muscle-distribution")
+async def muscle_distribution(
+    from_date: datetime | None = None,
+    to_date: datetime | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Total SETS count per muscle group (Primary Only for now).
+    """
+    conditions = []
+    if from_date:
+        conditions.append(Workout.started_at >= from_date)
+    if to_date:
+        conditions.append(Workout.started_at <= to_date)
+
+    stmt = (
+        select(
+            Exercise.primary_muscle_group_id,
+            func.count(WorkoutSet.id).label("set_count")
+        )
+        .join(WorkoutSet, Exercise.id == WorkoutSet.exercise_id)
+        .join(Workout, Workout.id == WorkoutSet.workout_id)
+        .where(
+            Exercise.primary_muscle_group_id.isnot(None),
+            *conditions
+        )
+        .group_by(Exercise.primary_muscle_group_id)
+    )
+    
+    result = await db.execute(stmt)
+    rows = result.all()
+    
+    from app.models.muscle_group import MuscleGroup
+    mg_result = await db.execute(select(MuscleGroup.id, MuscleGroup.name))
+    mg_map = {row.id: row.name for row in mg_result.all()}
+    
+    return [
+        {"name": mg_map.get(r.primary_muscle_group_id, "Unknown"), "value": r.set_count}
+        for r in rows
+    ]
+
+
+@router.get("/workout-density")
+async def workout_density(
+    from_date: datetime | None = None,
+    to_date: datetime | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Sets per workout, stacked by Exercise.
+    """
+    conditions = []
+    if from_date:
+        conditions.append(Workout.started_at >= from_date)
+    if to_date:
+        conditions.append(Workout.started_at <= to_date)
+
+    stmt = (
+        select(
+            Workout.started_at,
+            Exercise.name,
+            func.count(WorkoutSet.id).label("set_count")
+        )
+        .join(WorkoutSet, Workout.id == WorkoutSet.workout_id)
+        .join(Exercise, Exercise.id == WorkoutSet.exercise_id)
+        .where(*conditions)
+        .group_by(Workout.started_at, Exercise.name)
+        .order_by(Workout.started_at)
+    )
+    
+    result = await db.execute(stmt)
+    rows = result.all()
+    
+    data_by_date: dict[str, dict[str, Any]] = {}
+    
+    for r in rows:
+        d = r.started_at.date().isoformat()
+        if d not in data_by_date:
+            data_by_date[d] = {"date": d}
+            
+        data_by_date[d][r.name] = r.set_count
+        
+    return list(data_by_date.values())
+
+
+@router.get("/plateau-radar")
+async def plateau_radar(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Radar chart data: Top 6 exercises by volume.
+    Compare: "All Time Best Volume" vs "Average of Last 3 Workouts Volume".
+    """
+    # 1. Find top 6 exercises by total all-time sets (most practiced)
+    top_ex_stmt = (
+        select(Exercise.id, Exercise.name)
+        .join(WorkoutSet, Exercise.id == WorkoutSet.exercise_id)
+        .group_by(Exercise.id)
+        .order_by(func.count(WorkoutSet.id).desc())
+        .limit(6)
+    )
+    top_ex_res = await db.execute(top_ex_stmt)
+    top_exercises = top_ex_res.all()
+    
+    valid_data = []
+    
+    for ex_id, ex_name in top_exercises:
+        # Get all workouts for this exercise with computed volume
+        hist_stmt = (
+            select(
+                Workout.started_at,
+                func.sum(WorkoutSet.weight * WorkoutSet.reps).label("vol")
+            )
+            .join(WorkoutSet, Workout.id == WorkoutSet.workout_id)
+            .where(
+                WorkoutSet.exercise_id == ex_id,
+                WorkoutSet.weight.isnot(None),
+                WorkoutSet.reps.isnot(None)
+            )
+            .group_by(Workout.id, Workout.started_at)
+            .order_by(Workout.started_at.desc())
+        )
+        hist_res = await db.execute(hist_stmt)
+        history = hist_res.all()
+        
+        if not history:
+            continue
+            
+        # All time best
+        all_time_best = max(h.vol for h in history)
+        
+        # Recent average (last 3 sessions)
+        recent_sessions = history[:3]
+        recent_avg = sum(h.vol for h in recent_sessions) / len(recent_sessions)
+        
+        valid_data.append({
+            "subject": ex_name,
+            "A": round(all_time_best, 1), # Full
+            "B": round(recent_avg, 1),    # Recent
+            "fullMark": round(all_time_best * 1.1, 1), # Scale max
+        })
+        
+    return valid_data

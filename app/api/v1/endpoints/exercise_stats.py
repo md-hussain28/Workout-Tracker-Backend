@@ -119,7 +119,7 @@ async def exercise_stats(
             for row in label_result.all()
         ]
 
-        # 1RM progression (per workout, best set)
+        # 1RM progression, Volume History, Max Weight History
         progression_result = await db.execute(
             select(Workout.started_at, WorkoutSet.weight, WorkoutSet.reps)
             .join(Workout, Workout.id == WorkoutSet.workout_id)
@@ -131,7 +131,10 @@ async def exercise_stats(
             .order_by(Workout.started_at)
         )
         
-        progression_by_date: dict[str, float] = {}
+        # Date -> { 1rm, volume, weight }
+        # We want the BEST per day/workout
+        daily_stats: dict[str, dict] = {}
+
         for row in progression_result.all():
             if not row.started_at:
                 continue
@@ -139,21 +142,48 @@ async def exercise_stats(
             w = float(row.weight) if row.weight is not None else 0.0
             r = int(row.reps) if row.reps is not None else 0
             
-            est = _brzycki_1rm(w, r)
-            if est > 0 and (d not in progression_by_date or est > progression_by_date[d]):
-                progression_by_date[d] = est
+            vol = w * r
+            est_1rm = _brzycki_1rm(w, r)
+            
+            if d not in daily_stats:
+                daily_stats[d] = {"1rm": 0.0, "volume": 0.0, "weight": 0.0}
+            
+            # Update maxes for the day
+            if est_1rm > daily_stats[d]["1rm"]:
+                daily_stats[d]["1rm"] = est_1rm
+            
+            # For volume, it's usually sum per workout, BUT users might want max volume set?
+            # Standard "Volume Load" is sum of all sets. Let's do Sum for Volume.
+            daily_stats[d]["volume"] += vol
+
+            # Max weight lifted that day
+            if w > daily_stats[d]["weight"]:
+                daily_stats[d]["weight"] = w
                 
         one_rm_progression = [
-            {"date": d, "estimated_1rm": round(v, 2)}
-            for d, v in progression_by_date.items()
+            {"date": d, "estimated_1rm": round(stats["1rm"], 2)}
+            for d, stats in daily_stats.items() if stats["1rm"] > 0
+        ]
+        
+        volume_history = [
+            {"date": d, "volume": round(stats["volume"], 2)}
+            for d, stats in daily_stats.items() if stats["volume"] > 0
+        ]
+
+        max_weight_history = [
+            {"date": d, "weight": stats["weight"]}
+            for d, stats in daily_stats.items() if stats["weight"] > 0
         ]
 
         # Recent history – last 10 workouts with sets
+        # FIX: "SELECT DISTINCT, ORDER BY expressions must appear in select list"
+        # We group by workout ID and order by the max started_at for that workout (which is just started_at)
         recent_workout_ids_result = await db.execute(
-            select(func.distinct(WorkoutSet.workout_id))
-            .where(WorkoutSet.exercise_id == exercise_id)
+            select(WorkoutSet.workout_id)
             .join(Workout, Workout.id == WorkoutSet.workout_id)
-            .order_by(Workout.started_at.desc())
+            .where(WorkoutSet.exercise_id == exercise_id)
+            .group_by(WorkoutSet.workout_id)
+            .order_by(func.max(Workout.started_at).desc())
             .limit(10)
         )
         recent_ids = [r[0] for r in recent_workout_ids_result.all() if r[0] is not None]
@@ -198,6 +228,8 @@ async def exercise_stats(
             },
             "set_label_distribution": set_label_distribution,
             "one_rm_progression": one_rm_progression,
+            "volume_history": volume_history,
+            "max_weight_history": max_weight_history,
             "recent_history": recent_history,
         }
     except Exception as e:
