@@ -201,6 +201,15 @@ async def add_set_to_workout(
     db.add(set_)
     await db.flush()
     await db.refresh(set_)
+    
+    # Reload with exercise for frontend display
+    result = await db.execute(
+        select(WorkoutSet)
+        .where(WorkoutSet.id == set_.id)
+        .options(selectinload(WorkoutSet.exercise))
+    )
+    set_ = result.scalar_one()
+
     return set_
 
 
