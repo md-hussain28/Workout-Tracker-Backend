@@ -129,7 +129,7 @@ async def exercise_stats(
     for row in progression_result.all():
         d = row.started_at.date().isoformat() if row.started_at else "unknown"
         est = _brzycki_1rm(float(row.weight), int(row.reps))
-        if d not in progression_by_date or est > progression_by_date[d]:
+        if est > 0 and (d not in progression_by_date or est > progression_by_date[d]):
             progression_by_date[d] = est
     one_rm_progression = [
         {"date": d, "estimated_1rm": round(v, 2)}
