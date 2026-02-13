@@ -1,7 +1,8 @@
 """Data insights & analytics: muscle volume, 1RM, tonnage, consistency."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from math import exp
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
@@ -427,3 +428,122 @@ async def plateau_radar(
         })
         
     return valid_data
+
+
+@router.get("/recovery")
+async def muscle_recovery(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Muscle-group fatigue/readiness scan for anatomy heatmap.
+    Returns per-muscle fatigue_score (0.0-1.0) and overstrained flag.
+
+    Logic:
+    - Calculate weighted volume (primary 100%, secondary 50%, tertiary 25%)
+      for the last 48 hours and the last 28 days.
+    - fatigue_score = recent_volume / max(avg_volume, 1) clamped to 0-1,
+      with exponential decay based on hours since last trained.
+    - overstrained = true if 48h volume exceeds 4-week session average by >30%.
+    """
+    from app.models.muscle_group import MuscleGroup
+
+    now = datetime.now(timezone.utc)
+    cutoff_48h = now - timedelta(hours=48)
+    cutoff_28d = now - timedelta(days=28)
+
+    # ── Fetch all muscle groups ──
+    mg_result = await db.execute(select(MuscleGroup.id, MuscleGroup.name))
+    all_muscles = {row.id: row.name for row in mg_result.all()}
+
+    # ── Fetch all sets from last 28 days with exercise + workout ──
+    stmt = (
+        select(WorkoutSet, Exercise, Workout.started_at)
+        .join(Exercise, Exercise.id == WorkoutSet.exercise_id)
+        .join(Workout, Workout.id == WorkoutSet.workout_id)
+        .where(Workout.started_at >= cutoff_28d)
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    # ── Accumulate per-muscle volumes ──
+    # recent_vol = volume in last 48h
+    # total_vol_28d = total volume in 28 days
+    # workout_dates_28d = set of workout dates per muscle (to count sessions)
+    # last_trained = most recent workout timestamp per muscle
+    recent_vol: dict[int, float] = {}
+    total_vol_28d: dict[int, float] = {}
+    session_count_28d: dict[int, int] = {}  # approximate via distinct workout dates
+    workout_ids_28d: dict[int, set[int]] = {}
+    last_trained: dict[int, datetime] = {}
+
+    for (s, ex, started_at) in rows:
+        weight = float(s.weight or 0)
+        reps = int(s.reps or 0)
+        duration = int(s.duration_seconds or 0)
+
+        for mg_id, is_p, is_s, is_t in [
+            (ex.primary_muscle_group_id, True, False, False),
+            (ex.secondary_muscle_group_id, False, True, False),
+            (ex.tertiary_muscle_group_id, False, False, True),
+        ]:
+            if mg_id is None:
+                continue
+            factor = _volume_weight(is_p, is_s, is_t)
+            vol = (duration * factor) if duration else ((weight * reps) * factor)
+
+            # 28-day totals
+            total_vol_28d[mg_id] = total_vol_28d.get(mg_id, 0) + vol
+            if mg_id not in workout_ids_28d:
+                workout_ids_28d[mg_id] = set()
+            workout_ids_28d[mg_id].add(s.workout_id)
+
+            # 48h window
+            if started_at and started_at >= cutoff_48h:
+                recent_vol[mg_id] = recent_vol.get(mg_id, 0) + vol
+
+            # Last trained
+            if started_at:
+                if mg_id not in last_trained or started_at > last_trained[mg_id]:
+                    last_trained[mg_id] = started_at
+
+    # ── Compute per-muscle scores ──
+    muscles = []
+    for mg_id, mg_name in all_muscles.items():
+        sessions = len(workout_ids_28d.get(mg_id, set()))
+        avg_session_vol = (total_vol_28d.get(mg_id, 0) / max(sessions, 1))
+        recent = recent_vol.get(mg_id, 0)
+        lt = last_trained.get(mg_id)
+
+        # Time-based decay: exponential decay over 72 hours
+        if lt:
+            hours_since = max((now - lt).total_seconds() / 3600, 0)
+            decay = exp(-hours_since / 24)  # half-life ~17h, near-zero at 72h
+        else:
+            decay = 0.0  # never trained = fully recovered
+
+        # Raw fatigue: ratio of recent volume to average, scaled by decay
+        if avg_session_vol > 0:
+            raw_fatigue = (recent / avg_session_vol) * decay
+        else:
+            raw_fatigue = (1.0 if recent > 0 else 0.0) * decay
+
+        fatigue_score = round(min(max(raw_fatigue, 0.0), 1.0), 2)
+
+        # Overstrained: 48h volume > 130% of session average
+        overstrained = recent > avg_session_vol * 1.3 if avg_session_vol > 0 else False
+
+        # Normalised key for SVG mapping
+        muscle_key = mg_name.lower().replace(" ", "_")
+
+        muscles.append({
+            "key": muscle_key,
+            "name": mg_name,
+            "fatigue_score": fatigue_score,
+            "overstrained": overstrained,
+        })
+
+    # Sort by fatigue descending
+    muscles.sort(key=lambda m: -m["fatigue_score"])
+
+    return {"muscles": muscles}
+
