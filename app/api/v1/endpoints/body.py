@@ -1,0 +1,204 @@
+"""Body analytics endpoints — UserBio CRUD + BodyLog POST/GET."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select, desc, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_db
+from app.models.body_log import BodyLog
+from app.models.user_bio import UserBio
+from app.schemas.body import (
+    BodyLogCreate,
+    BodyLogRead,
+    BodyLogUpdate,
+    UserBioCreate,
+    UserBioRead,
+    UserBioUpdate,
+)
+from app.services.body_analytics import compute_all_stats
+
+router = APIRouter()
+USER_ID = 1  # singleton until auth is added
+
+
+# ── UserBio ──────────────────────────────────────────────────────────────
+
+@router.get("/bio", response_model=Optional[UserBioRead])
+async def get_bio(db: AsyncSession = Depends(get_db)):
+    """Get the singleton user bio profile."""
+    result = await db.execute(select(UserBio).where(UserBio.id == USER_ID))
+    bio = result.scalar_one_or_none()
+    return bio
+
+
+@router.put("/bio", response_model=UserBioRead)
+async def upsert_bio(payload: UserBioCreate, db: AsyncSession = Depends(get_db)):
+    """Create or update the singleton user bio."""
+    result = await db.execute(select(UserBio).where(UserBio.id == USER_ID))
+    bio = result.scalar_one_or_none()
+
+    if bio:
+        bio.height_cm = payload.height_cm
+        bio.age = payload.age
+        bio.sex = payload.sex
+        bio.updated_at = datetime.now(timezone.utc)
+    else:
+        bio = UserBio(
+            id=USER_ID,
+            height_cm=payload.height_cm,
+            age=payload.age,
+            sex=payload.sex,
+        )
+        db.add(bio)
+
+    await db.flush()
+    await db.refresh(bio)
+    return bio
+
+
+# ── BodyLog ──────────────────────────────────────────────────────────────
+
+@router.post("/log", response_model=BodyLogRead, status_code=201)
+async def create_body_log(payload: BodyLogCreate, db: AsyncSession = Depends(get_db)):
+    """Log weight + optional circumferences. Computes all analytics stats on write."""
+    # Fetch user bio for height / age / sex
+    result = await db.execute(select(UserBio).where(UserBio.id == USER_ID))
+    bio = result.scalar_one_or_none()
+    if not bio:
+        raise HTTPException(
+            status_code=400,
+            detail="Set up your profile first (PUT /body/bio).",
+        )
+
+    # Resolve weight: use provided value, or fall back to most recent log
+    weight = payload.weight_kg
+    if weight is None:
+        latest = await db.execute(
+            select(BodyLog.weight_kg)
+            .where(BodyLog.user_id == USER_ID)
+            .order_by(BodyLog.created_at.desc())
+            .limit(1)
+        )
+        last_weight = latest.scalar_one_or_none()
+        if last_weight is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Weight is required for your first entry.",
+            )
+        weight = last_weight
+
+    # Run all calculations in-memory
+    stats = compute_all_stats(
+        weight_kg=weight,
+        height_cm=bio.height_cm,
+        age=bio.age,
+        sex=bio.sex,
+        measurements=payload.measurements,
+        manual_bf=payload.body_fat_pct,
+    )
+
+    log = BodyLog(
+        user_id=USER_ID,
+        weight_kg=weight,
+        body_fat_pct=stats.get("bf_navy") or payload.body_fat_pct,
+        measurements=payload.measurements,
+        computed_stats=stats,
+    )
+    db.add(log)
+    await db.flush()
+    await db.refresh(log)
+    return log
+
+
+@router.get("/log", response_model=list[BodyLogRead])
+async def list_body_logs(
+    days: Optional[int] = Query(None, description="Filter to last N days (7, 30, 90). Omit for all."),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get body log history, optionally filtered by recent days."""
+    stmt = (
+        select(BodyLog)
+        .where(BodyLog.user_id == USER_ID)
+        .order_by(desc(BodyLog.created_at))
+    )
+    if days is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        stmt = stmt.where(BodyLog.created_at >= cutoff)
+
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+@router.get("/log/latest", response_model=Optional[BodyLogRead])
+async def get_latest_body_log(db: AsyncSession = Depends(get_db)):
+    """Get the most recent body log entry."""
+    result = await db.execute(
+        select(BodyLog)
+        .where(BodyLog.user_id == USER_ID)
+        .order_by(desc(BodyLog.created_at))
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+@router.patch("/log/{log_id}", response_model=BodyLogRead)
+async def update_body_log(log_id: int, payload: BodyLogUpdate, db: AsyncSession = Depends(get_db)):
+    """Update a body log entry. Re-computes all stats."""
+    result = await db.execute(
+        select(BodyLog).where(BodyLog.id == log_id, BodyLog.user_id == USER_ID)
+    )
+    log = result.scalar_one_or_none()
+    if not log:
+        raise HTTPException(status_code=404, detail="Body log not found")
+
+    # Fetch bio for re-calculation
+    bio_result = await db.execute(select(UserBio).where(UserBio.id == USER_ID))
+    bio = bio_result.scalar_one_or_none()
+    if not bio:
+        raise HTTPException(status_code=400, detail="Profile not set up.")
+
+    # Apply partial updates
+    if payload.weight_kg is not None:
+        log.weight_kg = payload.weight_kg
+    if payload.body_fat_pct is not None:
+        log.body_fat_pct = payload.body_fat_pct
+    if payload.measurements is not None:
+        # Merge: keep existing keys, overwrite provided ones
+        existing = log.measurements or {}
+        existing.update(payload.measurements)
+        log.measurements = existing
+    if payload.created_at is not None:
+        log.created_at = payload.created_at
+
+    # Re-compute stats with updated values
+    stats = compute_all_stats(
+        weight_kg=log.weight_kg,
+        height_cm=bio.height_cm,
+        age=bio.age,
+        sex=bio.sex,
+        measurements=log.measurements,
+        manual_bf=log.body_fat_pct,
+    )
+    log.body_fat_pct = stats.get("bf_navy") or log.body_fat_pct
+    log.computed_stats = stats
+
+    await db.flush()
+    await db.refresh(log)
+    return log
+
+
+@router.delete("/log/{log_id}", status_code=204)
+async def delete_body_log(log_id: int, db: AsyncSession = Depends(get_db)):
+    """Delete a body log entry."""
+    result = await db.execute(
+        select(BodyLog).where(BodyLog.id == log_id, BodyLog.user_id == USER_ID)
+    )
+    log = result.scalar_one_or_none()
+    if not log:
+        raise HTTPException(status_code=404, detail="Body log not found")
+    await db.delete(log)
