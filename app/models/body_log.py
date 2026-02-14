@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -23,9 +24,9 @@ class BodyLog(Base):
         Index("ix_body_logs_user_created", "user_id", "created_at"),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("user_bio.id", ondelete="CASCADE"), nullable=False, default=1
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user_bio.id", ondelete="CASCADE"), nullable=False
     )
     weight_kg: Mapped[float] = mapped_column(Float, nullable=False)
     body_fat_pct: Mapped[float | None] = mapped_column(Float, nullable=True)

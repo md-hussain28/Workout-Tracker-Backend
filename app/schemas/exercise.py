@@ -1,5 +1,7 @@
 """Exercise schemas."""
 
+from uuid import UUID
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enums import MeasurementMode
@@ -12,9 +14,9 @@ class ExerciseBase(BaseModel):
     unit: str = Field(default="kg", max_length=20)
     measurement_mode: MeasurementMode = MeasurementMode.WEIGHT_REPS
     rest_seconds_preset: int | None = None
-    primary_muscle_group_id: int | None = None
-    secondary_muscle_group_id: int | None = None
-    tertiary_muscle_group_id: int | None = None
+    primary_muscle_group_id: UUID | None = None
+    secondary_muscle_group_id: UUID | None = None
+    tertiary_muscle_group_id: UUID | None = None
 
 
 class ExerciseCreate(ExerciseBase):
@@ -27,14 +29,14 @@ class ExerciseUpdate(BaseModel):
     unit: str | None = None
     measurement_mode: MeasurementMode | None = None
     rest_seconds_preset: int | None = None
-    primary_muscle_group_id: int | None = None
-    secondary_muscle_group_id: int | None = None
-    tertiary_muscle_group_id: int | None = None
+    primary_muscle_group_id: UUID | None = None
+    secondary_muscle_group_id: UUID | None = None
+    tertiary_muscle_group_id: UUID | None = None
 
 
 class ExerciseRead(ExerciseBase):
     model_config = ConfigDict(from_attributes=True)
-    id: int
+    id: UUID
     primary_muscle_group: MuscleGroupRead | None = None
     secondary_muscle_group: MuscleGroupRead | None = None
     tertiary_muscle_group: MuscleGroupRead | None = None

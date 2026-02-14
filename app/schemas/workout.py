@@ -1,6 +1,7 @@
 """Workout and WorkoutSet schemas."""
 
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,14 +11,14 @@ from app.core.enums import PRType, SetLabel
 class ExerciseRef(BaseModel):
     """Minimal exercise info for embedding in set responses (id + name only)."""
 
-    id: int
+    id: UUID
     name: str
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class WorkoutSetBase(BaseModel):
-    exercise_id: int
+    exercise_id: UUID
     set_order: int = 0
     weight: float | None = None
     reps: int | None = None
@@ -40,8 +41,8 @@ class WorkoutSetUpdate(BaseModel):
 
 class WorkoutSetRead(WorkoutSetBase):
     model_config = ConfigDict(from_attributes=True)
-    id: int
-    workout_id: int
+    id: UUID
+    workout_id: UUID
     is_pr: bool = False
     pr_type: PRType | None = None
     exercise: ExerciseRef | None = None
@@ -64,7 +65,7 @@ class WorkoutUpdate(BaseModel):
 
 class WorkoutRead(WorkoutBase):
     model_config = ConfigDict(from_attributes=True)
-    id: int
+    id: UUID
     started_at: datetime
     ended_at: datetime | None = None
     duration_seconds: int | None = None

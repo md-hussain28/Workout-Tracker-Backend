@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+import uuid
 
 from app.db.base import Base
 
@@ -14,7 +16,7 @@ class WorkoutTemplate(Base):
 
     __tablename__ = "workout_templates"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -31,15 +33,14 @@ class TemplateExercise(Base):
 
     __tablename__ = "template_exercises"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    template_id: Mapped[int] = mapped_column(
-        ForeignKey("workout_templates.id", ondelete="CASCADE"), nullable=False
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    template_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workout_templates.id", ondelete="CASCADE"), nullable=False
     )
-    exercise_id: Mapped[int] = mapped_column(
-        ForeignKey("exercises.id", ondelete="CASCADE"), nullable=False
+    exercise_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("exercises.id", ondelete="CASCADE"), nullable=False
     )
     order_in_template: Mapped[int] = mapped_column(Integer, default=0)
 
     template: Mapped["WorkoutTemplate"] = relationship("WorkoutTemplate", back_populates="exercises")
     exercise: Mapped["Exercise"] = relationship("Exercise", back_populates="template_entries")
-

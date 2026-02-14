@@ -1,5 +1,7 @@
 """Muscle group schemas."""
 
+from uuid import UUID
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -19,7 +21,7 @@ class MuscleGroupUpdate(BaseModel):
 
 class MuscleGroupRead(MuscleGroupBase):
     model_config = ConfigDict(from_attributes=True)
-    id: int
+    id: UUID
 
 
 class MuscleGroupChartPoint(BaseModel):
@@ -28,7 +30,7 @@ class MuscleGroupChartPoint(BaseModel):
 
 
 class MuscleGroupTopExercise(BaseModel):
-    id: int
+    id: UUID
     name: str
     volume: float
     set_count: int
@@ -41,7 +43,7 @@ class MuscleGroupRoleDistribution(BaseModel):
 
 
 class MuscleGroupStats(BaseModel):
-    id: int
+    id: UUID
     name: str
     color: str | None = None
     total_workouts: int

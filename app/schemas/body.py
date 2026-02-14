@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -25,7 +26,7 @@ class UserBioUpdate(BaseModel):
 class UserBioRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: UUID
     height_cm: float
     age: int
     sex: str
@@ -57,8 +58,8 @@ class BodyLogUpdate(BaseModel):
 class BodyLogRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
-    user_id: int
+    id: UUID
+    user_id: UUID
     weight_kg: float
     body_fat_pct: Optional[float] = None
     measurements: Optional[dict[str, float]] = None

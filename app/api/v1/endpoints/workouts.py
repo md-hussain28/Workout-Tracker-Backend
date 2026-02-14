@@ -222,7 +222,9 @@ async def update_set(
 ):
     """Update an existing set (weight, reps, duration, notes, label)."""
     result = await db.execute(
-        select(WorkoutSet).where(WorkoutSet.id == set_id, WorkoutSet.workout_id == workout_id)
+        select(WorkoutSet)
+        .where(WorkoutSet.id == set_id, WorkoutSet.workout_id == workout_id)
+        .options(selectinload(WorkoutSet.exercise))
     )
     set_ = result.scalar_one_or_none()
     if not set_:
