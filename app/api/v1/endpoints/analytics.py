@@ -1,8 +1,11 @@
 """Data insights & analytics: muscle volume, 1RM, tonnage, consistency."""
 
+from __future__ import annotations
+
+import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
 from math import exp
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
@@ -112,7 +115,7 @@ def _epley_1rm(weight: float, reps: int) -> float:
 
 @router.get("/one-rm/{exercise_id}")
 async def one_rm_prediction(
-    exercise_id: int,
+    exercise_id: uuid.UUID,
     from_date: datetime | None = None,
     to_date: datetime | None = None,
     formula: str = "brzycki",

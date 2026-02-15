@@ -1,5 +1,8 @@
 """Exercise statistics endpoint – detailed stats for a single exercise."""
 
+from __future__ import annotations
+
+import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -24,7 +27,7 @@ def _brzycki_1rm(weight: float, reps: int) -> float:
 
 @router.get("/{exercise_id}/stats")
 async def exercise_stats(
-    exercise_id: int,
+    exercise_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
     """

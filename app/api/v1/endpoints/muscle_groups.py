@@ -1,5 +1,9 @@
 """Muscle group CRUD - custom hierarchy for exercise targeting."""
 
+from __future__ import annotations
+
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +46,7 @@ async def create_muscle_group(
 
 @router.get("/{muscle_group_id}", response_model=MuscleGroupRead)
 async def get_muscle_group(
-    muscle_group_id: int,
+    muscle_group_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
     """Get a single muscle group."""
@@ -55,7 +59,7 @@ async def get_muscle_group(
 
 @router.patch("/{muscle_group_id}", response_model=MuscleGroupRead)
 async def update_muscle_group(
-    muscle_group_id: int,
+    muscle_group_id: uuid.UUID,
     payload: MuscleGroupUpdate,
     db: AsyncSession = Depends(get_db),
 ):
@@ -73,7 +77,7 @@ async def update_muscle_group(
 
 @router.delete("/{muscle_group_id}", status_code=204)
 async def delete_muscle_group(
-    muscle_group_id: int,
+    muscle_group_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a muscle group (exercises' FKs set to NULL)."""
@@ -87,7 +91,7 @@ async def delete_muscle_group(
 
 @router.get("/{muscle_group_id}/stats", response_model=MuscleGroupStats)
 async def get_muscle_group_stats(
-    muscle_group_id: int,
+    muscle_group_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
     """Get statistics for a muscle group."""

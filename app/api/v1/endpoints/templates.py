@@ -1,5 +1,9 @@
 """Workout templates - save and reload workout structure."""
 
+from __future__ import annotations
+
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,8 +75,8 @@ async def create_template_from_workout(
         raise HTTPException(status_code=404, detail="Workout not found")
 
     # Unique exercise IDs in set order (first occurrence order)
-    seen: set[int] = set()
-    order: list[int] = []
+    seen: set = set()
+    order: list = []
     for s in sorted(workout.sets, key=lambda x: (x.set_order, x.id)):
         if s.exercise_id not in seen:
             seen.add(s.exercise_id)
@@ -97,7 +101,7 @@ async def create_template_from_workout(
 
 @router.get("/{template_id}", response_model=WorkoutTemplateRead)
 async def get_template(
-    template_id: int,
+    template_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
     """Get a template with its exercises."""
@@ -114,7 +118,7 @@ async def get_template(
 
 @router.patch("/{template_id}", response_model=WorkoutTemplateRead)
 async def update_template(
-    template_id: int,
+    template_id: uuid.UUID,
     payload: WorkoutTemplateUpdate,
     db: AsyncSession = Depends(get_db),
 ):
@@ -136,7 +140,7 @@ async def update_template(
 
 @router.delete("/{template_id}", status_code=204)
 async def delete_template(
-    template_id: int,
+    template_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a template."""
@@ -150,7 +154,7 @@ async def delete_template(
 
 @router.post("/{template_id}/instantiate", status_code=201)
 async def instantiate_template(
-    template_id: int,
+    template_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new workout from a template (same exercise order; sets added during session)."""

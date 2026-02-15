@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, desc, delete
+from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -22,18 +24,27 @@ from app.schemas.body import (
 )
 from app.services.body_analytics import compute_all_stats
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
-USER_ID = 1  # singleton until auth is added
+# Singleton user until auth: use a fixed UUID so it matches user_bio.id (UUID type).
+# Must be UUID — do not use integer 1 or GET/PUT will 500.
+USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
 # ── UserBio ──────────────────────────────────────────────────────────────
 
 @router.get("/bio", response_model=Optional[UserBioRead])
 async def get_bio(db: AsyncSession = Depends(get_db)):
-    """Get the singleton user bio profile."""
-    result = await db.execute(select(UserBio).where(UserBio.id == USER_ID))
-    bio = result.scalar_one_or_none()
-    return bio
+    """Get the singleton user bio profile. Returns null if not set up or on error."""
+    try:
+        result = await db.execute(select(UserBio).where(UserBio.id == USER_ID))
+        bio = result.scalar_one_or_none()
+        return bio
+    except Exception as e:
+        # Return null so frontend can show "Set up profile" instead of 500.
+        # Common cause: USER_ID was int (1) vs UUID column — fix is to deploy with USER_ID as UUID.
+        logger.exception("GET /body/bio failed: %s", e)
+        return None
 
 
 @router.put("/bio", response_model=UserBioRead)
@@ -147,7 +158,7 @@ async def get_latest_body_log(db: AsyncSession = Depends(get_db)):
 
 
 @router.patch("/log/{log_id}", response_model=BodyLogRead)
-async def update_body_log(log_id: int, payload: BodyLogUpdate, db: AsyncSession = Depends(get_db)):
+async def update_body_log(log_id: uuid.UUID, payload: BodyLogUpdate, db: AsyncSession = Depends(get_db)):
     """Update a body log entry. Re-computes all stats."""
     result = await db.execute(
         select(BodyLog).where(BodyLog.id == log_id, BodyLog.user_id == USER_ID)
@@ -193,7 +204,7 @@ async def update_body_log(log_id: int, payload: BodyLogUpdate, db: AsyncSession 
 
 
 @router.delete("/log/{log_id}", status_code=204)
-async def delete_body_log(log_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_body_log(log_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     """Delete a body log entry."""
     result = await db.execute(
         select(BodyLog).where(BodyLog.id == log_id, BodyLog.user_id == USER_ID)

@@ -1,5 +1,9 @@
 """Previous session context - what you did last time for an exercise (progressive overload)."""
 
+from __future__ import annotations
+
+import uuid
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,8 +17,8 @@ router = APIRouter()
 
 @router.get("/exercises/{exercise_id}/previous-session")
 async def get_previous_session_sets(
-    exercise_id: int,
-    exclude_workout_id: int | None = None,
+    exercise_id: uuid.UUID,
+    exclude_workout_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """

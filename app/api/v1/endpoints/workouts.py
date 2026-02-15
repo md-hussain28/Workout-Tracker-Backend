@@ -1,5 +1,8 @@
 """Workout CRUD endpoints."""
 
+from __future__ import annotations
+
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -80,7 +83,7 @@ async def create_workout(
 
 @router.get("/{workout_id}", response_model=WorkoutReadWithSets)
 async def get_workout(
-    workout_id: int,
+    workout_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
     """Get a workout with all sets (and exercise info)."""
@@ -97,7 +100,7 @@ async def get_workout(
 
 @router.patch("/{workout_id}", response_model=WorkoutRead)
 async def update_workout(
-    workout_id: int,
+    workout_id: uuid.UUID,
     payload: WorkoutUpdate,
     db: AsyncSession = Depends(get_db),
 ):
@@ -134,7 +137,7 @@ async def update_workout(
 
 @router.delete("/{workout_id}", status_code=204)
 async def delete_workout(
-    workout_id: int,
+    workout_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a workout and its sets."""
@@ -148,7 +151,7 @@ async def delete_workout(
 
 @router.post("/{workout_id}/sets", response_model=WorkoutSetRead, status_code=201)
 async def add_set_to_workout(
-    workout_id: int,
+    workout_id: uuid.UUID,
     payload: WorkoutSetCreate,
     db: AsyncSession = Depends(get_db),
 ):
@@ -215,8 +218,8 @@ async def add_set_to_workout(
 
 @router.patch("/{workout_id}/sets/{set_id}", response_model=WorkoutSetRead)
 async def update_set(
-    workout_id: int,
-    set_id: int,
+    workout_id: uuid.UUID,
+    set_id: uuid.UUID,
     payload: WorkoutSetUpdate,
     db: AsyncSession = Depends(get_db),
 ):
@@ -238,8 +241,8 @@ async def update_set(
 
 @router.delete("/{workout_id}/sets/{set_id}", status_code=204)
 async def delete_set(
-    workout_id: int,
-    set_id: int,
+    workout_id: uuid.UUID,
+    set_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a set from a workout."""

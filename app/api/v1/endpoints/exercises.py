@@ -1,5 +1,9 @@
 """Exercise CRUD endpoints."""
 
+from __future__ import annotations
+
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,7 +54,7 @@ async def create_exercise(
 
 @router.get("/{exercise_id}", response_model=ExerciseRead)
 async def get_exercise(
-    exercise_id: int,
+    exercise_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
     """Get a single exercise by id (includes muscle groups)."""
@@ -65,7 +69,7 @@ async def get_exercise(
 
 @router.patch("/{exercise_id}", response_model=ExerciseRead)
 async def update_exercise(
-    exercise_id: int,
+    exercise_id: uuid.UUID,
     payload: ExerciseUpdate,
     db: AsyncSession = Depends(get_db),
 ):
@@ -86,7 +90,7 @@ async def update_exercise(
 
 @router.delete("/{exercise_id}", status_code=204)
 async def delete_exercise(
-    exercise_id: int,
+    exercise_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
     """Delete an exercise."""
