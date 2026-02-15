@@ -26,8 +26,8 @@ from app.services.body_analytics import compute_all_stats
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-# Singleton user until auth: use a fixed UUID so it matches user_bio.id (UUID type).
-# Must be UUID — do not use integer 1 or GET/PUT will 500.
+# Singleton user until auth: one row in user_bio with this UUID as primary key.
+# The id in responses (e.g. "00000000-0000-0000-0000-000000000001") is this UUID — not an integer.
 USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
@@ -35,21 +35,19 @@ USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 @router.get("/bio", response_model=Optional[UserBioRead])
 async def get_bio(db: AsyncSession = Depends(get_db)):
-    """Get the singleton user bio profile. Returns null if not set up or on error."""
+    """Get the singleton user bio. Returns null only when no row exists (or on DB error)."""
     try:
         result = await db.execute(select(UserBio).where(UserBio.id == USER_ID))
         bio = result.scalar_one_or_none()
         return bio
     except Exception as e:
-        # Return null so frontend can show "Set up profile" instead of 500.
-        # Common cause: USER_ID was int (1) vs UUID column — fix is to deploy with USER_ID as UUID.
         logger.exception("GET /body/bio failed: %s", e)
         return None
 
 
 @router.put("/bio", response_model=UserBioRead)
 async def upsert_bio(payload: UserBioCreate, db: AsyncSession = Depends(get_db)):
-    """Create or update the singleton user bio."""
+    """Create or update the singleton user bio. Session is committed by get_db after this returns."""
     result = await db.execute(select(UserBio).where(UserBio.id == USER_ID))
     bio = result.scalar_one_or_none()
 
