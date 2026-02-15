@@ -22,6 +22,7 @@ class Workout(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)  # Total session duration
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    intensity: Mapped[str | None] = mapped_column(String(20), nullable=True)  # light, moderate, vigorous
 
     sets: Mapped[list["WorkoutSet"]] = relationship(
         "WorkoutSet", back_populates="workout", cascade="all, delete-orphan"

@@ -10,10 +10,16 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from app.api.v1.endpoints.body import USER_ID, get_weight_at_date
 from app.db.session import get_db
 from app.models.exercise import Exercise
 from app.models.workout import Workout, WorkoutSet
+from app.services.calorie_estimation import (
+    estimate_calories,
+    get_active_duration_minutes,
+)
 
 router = APIRouter()
 
@@ -549,4 +555,88 @@ async def muscle_recovery(
     muscles.sort(key=lambda m: -m["fatigue_score"])
 
     return {"muscles": muscles}
+
+
+@router.get("/calories-history")
+async def calories_history(
+    from_date: datetime | None = None,
+    to_date: datetime | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Time series of estimated calories burned per day (sum of workouts per day).
+    Requires body weight (BodyLog) for the user; returns empty list if no weight.
+    """
+    conditions = []
+    if from_date:
+        conditions.append(Workout.started_at >= from_date)
+    if to_date:
+        conditions.append(Workout.started_at <= to_date)
+    stmt = select(Workout)
+    if conditions:
+        stmt = stmt.where(*conditions)
+    stmt = stmt.options(selectinload(Workout.sets)).order_by(Workout.started_at)
+    result = await db.execute(stmt)
+    workouts = result.scalars().unique().all()
+
+    daily_calories: dict[str, float] = {}
+    for w in workouts:
+        weight_kg = await get_weight_at_date(db, USER_ID, w.started_at)
+        if weight_kg is None:
+            continue
+        duration_min = get_active_duration_minutes(w.duration_seconds, len(w.sets))
+        if duration_min <= 0:
+            continue
+        cal = estimate_calories(weight_kg, duration_min, w.intensity)
+        date_key = w.started_at.date().isoformat()
+        daily_calories[date_key] = daily_calories.get(date_key, 0) + round(cal)
+
+    return [
+        {"date": d, "calories": c}
+        for d, c in sorted(daily_calories.items())
+    ]
+
+
+@router.get("/calories-summary")
+async def calories_summary(
+    from_date: datetime | None = None,
+    to_date: datetime | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Total and average estimated calories in the date range.
+    """
+    conditions = []
+    if from_date:
+        conditions.append(Workout.started_at >= from_date)
+    if to_date:
+        conditions.append(Workout.started_at <= to_date)
+    stmt = select(Workout)
+    if conditions:
+        stmt = stmt.where(*conditions)
+    stmt = stmt.options(selectinload(Workout.sets)).order_by(Workout.started_at)
+    result = await db.execute(stmt)
+    workouts = result.scalars().unique().all()
+
+    total_calories = 0.0
+    for w in workouts:
+        weight_kg = await get_weight_at_date(db, USER_ID, w.started_at)
+        if weight_kg is None:
+            continue
+        duration_min = get_active_duration_minutes(w.duration_seconds, len(w.sets))
+        if duration_min <= 0:
+            continue
+        total_calories += estimate_calories(weight_kg, duration_min, w.intensity)
+
+    workout_count = len(workouts)
+    days_in_range = 1
+    if from_date and to_date and to_date > from_date:
+        days_in_range = max(1, (to_date - from_date).days + 1)
+    daily_average = round(total_calories / days_in_range, 1) if days_in_range else 0
+
+    return {
+        "total_calories": round(total_calories),
+        "workout_count": workout_count,
+        "daily_average": daily_average,
+    }
 

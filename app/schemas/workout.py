@@ -1,11 +1,14 @@
 """Workout and WorkoutSet schemas."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enums import PRType, SetLabel
+
+WorkoutIntensity = Literal["light", "moderate", "vigorous"]
 
 
 class ExerciseRef(BaseModel):
@@ -61,6 +64,7 @@ class WorkoutUpdate(BaseModel):
     ended_at: datetime | None = None
     duration_seconds: int | None = None
     notes: str | None = None
+    intensity: WorkoutIntensity | None = None
 
 
 class WorkoutRead(WorkoutBase):
@@ -69,10 +73,12 @@ class WorkoutRead(WorkoutBase):
     started_at: datetime
     ended_at: datetime | None = None
     duration_seconds: int | None = None
+    intensity: str | None = None
     sets: list[WorkoutSetRead] = []
 
 
 class WorkoutReadWithSets(WorkoutRead):
-    """Workout with nested sets (for detail view)."""
+    """Workout with nested sets (for detail view). Includes estimated_calories when computable."""
 
+    estimated_calories: float | None = None
     sets: list[WorkoutSetRead] = []

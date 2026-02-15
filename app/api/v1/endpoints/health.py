@@ -1,5 +1,6 @@
 """Health check endpoint for load balancers and monitoring."""
 
+import os
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -12,8 +13,12 @@ router = APIRouter()
 
 @router.get("")
 async def health():
-    """Simple liveness check."""
-    return {"status": "ok"}
+    """Simple liveness check. Optionally includes built_at if BACKEND_BUILT_AT env is set."""
+    payload: dict = {"status": "ok"}
+    built_at = os.environ.get("BACKEND_BUILT_AT") or os.environ.get("RENDER_GIT_COMMIT_TIMESTAMP")
+    if built_at:
+        payload["built_at"] = built_at
+    return payload
 
 
 @router.get("/ready")

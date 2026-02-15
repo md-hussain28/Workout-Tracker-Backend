@@ -14,6 +14,7 @@ from app.core.constants import (
     MAX_EXERCISES_PER_SESSION,
     MAX_SETS_PER_EXERCISE_PER_SESSION,
 )
+from app.api.v1.endpoints.body import USER_ID, get_weight_at_date
 from app.db.session import get_db
 from app.models.workout import Workout, WorkoutSet
 from app.schemas.workout import (
@@ -24,6 +25,10 @@ from app.schemas.workout import (
     WorkoutSetRead,
     WorkoutSetUpdate,
     WorkoutUpdate,
+)
+from app.services.calorie_estimation import (
+    estimate_calories,
+    get_active_duration_minutes,
 )
 from app.services.pr_detection import detect_pr
 
@@ -54,6 +59,7 @@ async def list_workouts(
             ended_at=w.ended_at,
             duration_seconds=w.duration_seconds,
             notes=w.notes,
+            intensity=w.intensity,
             sets=[],
         )
         for w in workouts
@@ -77,6 +83,7 @@ async def create_workout(
         ended_at=workout.ended_at,
         duration_seconds=workout.duration_seconds,
         notes=workout.notes,
+        intensity=workout.intensity,
         sets=[],
     )
 
@@ -86,7 +93,7 @@ async def get_workout(
     workout_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a workout with all sets (and exercise info)."""
+    """Get a workout with all sets (and exercise info). Includes estimated_calories when computable."""
     result = await db.execute(
         select(Workout)
         .where(Workout.id == workout_id)
@@ -95,7 +102,28 @@ async def get_workout(
     workout = result.scalar_one_or_none()
     if not workout:
         raise HTTPException(status_code=404, detail="Workout not found")
-    return workout
+
+    estimated_calories = None
+    weight_kg = await get_weight_at_date(db, USER_ID, workout.started_at)
+    if weight_kg is not None:
+        duration_min = get_active_duration_minutes(
+            workout.duration_seconds,
+            len(workout.sets),
+        )
+        if duration_min > 0:
+            cal = estimate_calories(weight_kg, duration_min, workout.intensity)
+            estimated_calories = round(cal)
+
+    return WorkoutReadWithSets(
+        id=workout.id,
+        started_at=workout.started_at,
+        ended_at=workout.ended_at,
+        duration_seconds=workout.duration_seconds,
+        notes=workout.notes,
+        intensity=workout.intensity,
+        estimated_calories=estimated_calories,
+        sets=[WorkoutSetRead.model_validate(s) for s in workout.sets],
+    )
 
 
 @router.patch("/{workout_id}", response_model=WorkoutRead)
@@ -131,6 +159,7 @@ async def update_workout(
         ended_at=workout.ended_at,
         duration_seconds=workout.duration_seconds,
         notes=workout.notes,
+        intensity=workout.intensity,
         sets=[],
     )
 

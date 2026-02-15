@@ -31,6 +31,35 @@ router = APIRouter()
 USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
+async def get_weight_at_date(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    at_date: datetime,
+) -> float | None:
+    """
+    Return weight_kg from the BodyLog closest to at_date (before or after).
+    If no logs exist, return None.
+    """
+    # Prefer latest log on or before at_date; else earliest after
+    before = await db.execute(
+        select(BodyLog.weight_kg)
+        .where(BodyLog.user_id == user_id, BodyLog.created_at <= at_date)
+        .order_by(BodyLog.created_at.desc())
+        .limit(1)
+    )
+    w = before.scalar_one_or_none()
+    if w is not None:
+        return float(w)
+    after = await db.execute(
+        select(BodyLog.weight_kg)
+        .where(BodyLog.user_id == user_id, BodyLog.created_at > at_date)
+        .order_by(BodyLog.created_at.asc())
+        .limit(1)
+    )
+    a = after.scalar_one_or_none()
+    return float(a) if a is not None else None
+
+
 # ── UserBio ──────────────────────────────────────────────────────────────
 
 @router.get("/bio", response_model=Optional[UserBioRead])
