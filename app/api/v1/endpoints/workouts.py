@@ -111,7 +111,21 @@ async def get_workout(
             len(workout.sets),
         )
         if duration_min > 0:
-            cal = estimate_calories(weight_kg, duration_min, workout.intensity)
+            tonnage = sum(
+                float(s.weight or 0) * float(s.reps or 0)
+                for s in workout.sets
+                if s.weight is not None and s.reps is not None
+            )
+            active_sec = sum(s.time_under_tension_seconds or 0 for s in workout.sets)
+            rest_sec = sum(s.rest_seconds_after or 0 for s in workout.sets)
+            cal = estimate_calories(
+                weight_kg,
+                duration_min,
+                workout.intensity,
+                tonnage_kg=tonnage if tonnage > 0 else None,
+                active_seconds=active_sec if active_sec > 0 else None,
+                rest_seconds=rest_sec if rest_sec > 0 else None,
+            )
             estimated_calories = round(cal)
 
     return WorkoutReadWithSets(

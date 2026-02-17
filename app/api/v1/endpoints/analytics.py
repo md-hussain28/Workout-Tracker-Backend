@@ -422,18 +422,18 @@ async def plateau_radar(
         if not history:
             continue
             
-        # All time best
-        all_time_best = max(h.vol for h in history)
+        # All time best (vol can be Decimal from DB; convert to float for JSON and arithmetic)
+        all_time_best = float(max(h.vol for h in history))
         
         # Recent average (last 3 sessions)
         recent_sessions = history[:3]
-        recent_avg = sum(h.vol for h in recent_sessions) / len(recent_sessions)
+        recent_avg = float(sum(h.vol for h in recent_sessions)) / len(recent_sessions)
         
         valid_data.append({
             "subject": ex_name,
-            "A": round(all_time_best, 1), # Full
-            "B": round(recent_avg, 1),    # Recent
-            "fullMark": round(all_time_best * 1.1, 1), # Scale max
+            "A": round(all_time_best, 1),  # Full
+            "B": round(recent_avg, 1),     # Recent
+            "fullMark": round(all_time_best * 1.1, 1),  # Scale max
         })
         
     return valid_data
@@ -587,7 +587,21 @@ async def calories_history(
         duration_min = get_active_duration_minutes(w.duration_seconds, len(w.sets))
         if duration_min <= 0:
             continue
-        cal = estimate_calories(weight_kg, duration_min, w.intensity)
+        tonnage = sum(
+            float(s.weight or 0) * float(s.reps or 0)
+            for s in w.sets
+            if s.weight is not None and s.reps is not None
+        )
+        active_sec = sum(s.time_under_tension_seconds or 0 for s in w.sets)
+        rest_sec = sum(s.rest_seconds_after or 0 for s in w.sets)
+        cal = estimate_calories(
+            weight_kg,
+            duration_min,
+            w.intensity,
+            tonnage_kg=tonnage if tonnage > 0 else None,
+            active_seconds=active_sec if active_sec > 0 else None,
+            rest_seconds=rest_sec if rest_sec > 0 else None,
+        )
         date_key = w.started_at.date().isoformat()
         daily_calories[date_key] = daily_calories.get(date_key, 0) + round(cal)
 
@@ -626,7 +640,21 @@ async def calories_summary(
         duration_min = get_active_duration_minutes(w.duration_seconds, len(w.sets))
         if duration_min <= 0:
             continue
-        total_calories += estimate_calories(weight_kg, duration_min, w.intensity)
+        tonnage = sum(
+            float(s.weight or 0) * float(s.reps or 0)
+            for s in w.sets
+            if s.weight is not None and s.reps is not None
+        )
+        active_sec = sum(s.time_under_tension_seconds or 0 for s in w.sets)
+        rest_sec = sum(s.rest_seconds_after or 0 for s in w.sets)
+        total_calories += estimate_calories(
+            weight_kg,
+            duration_min,
+            w.intensity,
+            tonnage_kg=tonnage if tonnage > 0 else None,
+            active_seconds=active_sec if active_sec > 0 else None,
+            rest_seconds=rest_sec if rest_sec > 0 else None,
+        )
 
     workout_count = len(workouts)
     days_in_range = 1

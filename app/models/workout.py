@@ -30,7 +30,8 @@ class Workout(Base):
 
 
 class WorkoutSet(Base):
-    """One set: weight/reps/duration, optional label (warmup/failure/drop_set) and PR flags."""
+    """One set: weight/reps/duration, optional label (warmup/failure/drop_set) and PR flags.
+    Optional time under tension and rest after set for better calorie estimation."""
 
     __tablename__ = "workout_sets"
 
@@ -42,6 +43,10 @@ class WorkoutSet(Base):
     reps: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # Optional: for better calorie estimation (seconds)
+    time_under_tension_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)  # TUT per set
+    rest_seconds_after: Mapped[int | None] = mapped_column(Integer, nullable=True)  # rest after this set
 
     set_label: Mapped[SetLabel | None] = mapped_column(Enum(SetLabel), nullable=True)  # warmup, working, failure, drop_set
     is_pr: Mapped[bool] = mapped_column(default=False, nullable=False)

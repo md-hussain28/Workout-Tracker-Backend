@@ -28,6 +28,8 @@ class WorkoutSetBase(BaseModel):
     duration_seconds: int | None = None
     notes: str | None = None
     set_label: SetLabel | None = None
+    time_under_tension_seconds: int | None = None
+    rest_seconds_after: int | None = None
 
 
 class WorkoutSetCreate(WorkoutSetBase):
@@ -40,6 +42,8 @@ class WorkoutSetUpdate(BaseModel):
     duration_seconds: int | None = None
     notes: str | None = None
     set_label: SetLabel | None = None
+    time_under_tension_seconds: int | None = None
+    rest_seconds_after: int | None = None
 
 
 class WorkoutSetRead(WorkoutSetBase):
