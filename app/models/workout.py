@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import uuid
@@ -16,6 +16,7 @@ class Workout(Base):
     """A single workout session with optional duration (logged on completion)."""
 
     __tablename__ = "workouts"
+    __table_args__ = (Index("ix_workouts_started_at", "started_at"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -34,6 +35,10 @@ class WorkoutSet(Base):
     Optional time under tension and rest after set for better calorie estimation."""
 
     __tablename__ = "workout_sets"
+    __table_args__ = (
+        Index("ix_workout_sets_workout_id", "workout_id"),
+        Index("ix_workout_sets_exercise_id", "exercise_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     workout_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workouts.id", ondelete="CASCADE"), nullable=False)

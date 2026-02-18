@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select, case
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,6 +15,13 @@ from app.models.exercise import Exercise
 from app.models.workout import Workout, WorkoutSet
 
 router = APIRouter()
+
+# Brzycki 1RM in SQL: weight * 36/(37-reps), or weight*1.1 for reps>=37
+def _brzycki_1rm_expr(weight_col, reps_col):
+    return case(
+        (reps_col >= 37, weight_col * 1.1),
+        else_=weight_col * 36.0 / func.nullif(37 - reps_col, 0),
+    )
 
 
 def _brzycki_1rm(weight: float, reps: int) -> float:
@@ -45,68 +52,32 @@ async def exercise_stats(
         if not exercise:
             raise HTTPException(status_code=404, detail="Exercise not found")
 
-        # Basic counts
-        count_result = await db.execute(
+        # Single combined query: counts, first/last dates, and all PRs (including best_volume, best_1rm in SQL)
+        agg = await db.execute(
             select(
                 func.count(WorkoutSet.id).label("total_sets"),
                 func.count(func.distinct(WorkoutSet.workout_id)).label("total_workouts"),
-            ).where(WorkoutSet.exercise_id == exercise_id)
-        )
-        counts = count_result.first()
-        total_sets = (counts.total_sets if counts else 0) or 0
-        total_workouts = (counts.total_workouts if counts else 0) or 0
-
-        # First and last performed dates
-        date_result = await db.execute(
-            select(
                 func.min(Workout.started_at).label("first"),
                 func.max(Workout.started_at).label("last"),
-            )
-            .join(WorkoutSet, WorkoutSet.workout_id == Workout.id)
-            .where(WorkoutSet.exercise_id == exercise_id)
-        )
-        dates = date_result.first()
-        first_performed = dates.first.isoformat() if dates and dates.first else None
-        last_performed = dates.last.isoformat() if dates and dates.last else None
-
-        # PRs
-        pr_result = await db.execute(
-            select(
                 func.max(WorkoutSet.weight).label("best_weight"),
                 func.max(WorkoutSet.reps).label("best_reps"),
                 func.max(WorkoutSet.duration_seconds).label("best_duration"),
-            ).where(WorkoutSet.exercise_id == exercise_id)
-        )
-        prs = pr_result.first()
-        best_weight = float(prs.best_weight) if prs and prs.best_weight is not None else None
-        best_reps = int(prs.best_reps) if prs and prs.best_reps is not None else None
-        best_duration = int(prs.best_duration) if prs and prs.best_duration is not None else None
-
-        # Best volume (weight * reps) and best estimated 1RM
-        vol_result = await db.execute(
-            select(WorkoutSet.weight, WorkoutSet.reps)
-            .where(
-                WorkoutSet.exercise_id == exercise_id,
-                WorkoutSet.weight.isnot(None),
-                WorkoutSet.reps.isnot(None),
+                func.max(WorkoutSet.weight * WorkoutSet.reps).label("best_volume"),
+                func.max(_brzycki_1rm_expr(WorkoutSet.weight, WorkoutSet.reps)).label("best_1rm"),
             )
+            .join(Workout, Workout.id == WorkoutSet.workout_id)
+            .where(WorkoutSet.exercise_id == exercise_id)
         )
-        best_volume = 0.0
-        best_1rm = 0.0
-        for row in vol_result.all():
-            w = float(row.weight) if row.weight is not None else 0.0
-            r = int(row.reps) if row.reps is not None else 0
-            # Safety check for crazy values
-            if w < 0: w = 0
-            if r < 0: r = 0
-
-            vol = w * r
-            if vol > best_volume:
-                best_volume = vol
-            
-            est = _brzycki_1rm(w, r)
-            if est > best_1rm:
-                best_1rm = est
+        row = agg.one_or_none()
+        total_sets = int(row.total_sets or 0) if row else 0
+        total_workouts = int(row.total_workouts or 0) if row else 0
+        first_performed = row.first.isoformat() if row and row.first else None
+        last_performed = row.last.isoformat() if row and row.last else None
+        best_weight = float(row.best_weight) if row and row.best_weight is not None else None
+        best_reps = int(row.best_reps) if row and row.best_reps is not None else None
+        best_duration = int(row.best_duration) if row and row.best_duration is not None else None
+        best_volume = float(row.best_volume) if row and row.best_volume is not None else 0.0
+        best_1rm = float(row.best_1rm) if row and row.best_1rm is not None else 0.0
 
         # Set label distribution
         label_result = await db.execute(
@@ -122,65 +93,39 @@ async def exercise_stats(
             for row in label_result.all()
         ]
 
-        # 1RM progression, Volume History, Max Weight History
+        # Daily progression in one query: group by date, aggregate 1rm/volume/weight
         progression_result = await db.execute(
-            select(Workout.started_at, WorkoutSet.weight, WorkoutSet.reps)
+            select(
+                func.date(Workout.started_at).label("d"),
+                func.max(_brzycki_1rm_expr(WorkoutSet.weight, WorkoutSet.reps)).label("best_1rm"),
+                func.sum(WorkoutSet.weight * WorkoutSet.reps).label("volume"),
+                func.max(WorkoutSet.weight).label("max_weight"),
+            )
             .join(Workout, Workout.id == WorkoutSet.workout_id)
             .where(
                 WorkoutSet.exercise_id == exercise_id,
                 WorkoutSet.weight.isnot(None),
                 WorkoutSet.reps.isnot(None),
             )
-            .order_by(Workout.started_at)
+            .group_by(func.date(Workout.started_at))
+            .order_by(func.date(Workout.started_at))
         )
-        
-        # Date -> { 1rm, volume, weight }
-        # We want the BEST per day/workout
-        daily_stats: dict[str, dict] = {}
+        daily_rows = progression_result.all()
 
-        for row in progression_result.all():
-            if not row.started_at:
-                continue
-            d = row.started_at.date().isoformat()
-            w = float(row.weight) if row.weight is not None else 0.0
-            r = int(row.reps) if row.reps is not None else 0
-            
-            vol = w * r
-            est_1rm = _brzycki_1rm(w, r)
-            
-            if d not in daily_stats:
-                daily_stats[d] = {"1rm": 0.0, "volume": 0.0, "weight": 0.0}
-            
-            # Update maxes for the day
-            if est_1rm > daily_stats[d]["1rm"]:
-                daily_stats[d]["1rm"] = est_1rm
-            
-            # For volume, it's usually sum per workout, BUT users might want max volume set?
-            # Standard "Volume Load" is sum of all sets. Let's do Sum for Volume.
-            daily_stats[d]["volume"] += vol
-
-            # Max weight lifted that day
-            if w > daily_stats[d]["weight"]:
-                daily_stats[d]["weight"] = w
-                
         one_rm_progression = [
-            {"date": d, "estimated_1rm": round(stats["1rm"], 2)}
-            for d, stats in daily_stats.items() if stats["1rm"] > 0
+            {"date": (r.d.isoformat() if hasattr(r.d, "isoformat") else str(r.d)), "estimated_1rm": round(float(r.best_1rm or 0), 2)}
+            for r in daily_rows if r.best_1rm and float(r.best_1rm) > 0
         ]
-        
         volume_history = [
-            {"date": d, "volume": round(stats["volume"], 2)}
-            for d, stats in daily_stats.items() if stats["volume"] > 0
+            {"date": (r.d.isoformat() if hasattr(r.d, "isoformat") else str(r.d)), "volume": round(float(r.volume or 0), 2)}
+            for r in daily_rows if r.volume and float(r.volume) > 0
         ]
-
         max_weight_history = [
-            {"date": d, "weight": stats["weight"]}
-            for d, stats in daily_stats.items() if stats["weight"] > 0
+            {"date": (r.d.isoformat() if hasattr(r.d, "isoformat") else str(r.d)), "weight": float(r.max_weight or 0)}
+            for r in daily_rows if r.max_weight and float(r.max_weight) > 0
         ]
 
-        # Recent history – last 10 workouts with sets
-        # FIX: "SELECT DISTINCT, ORDER BY expressions must appear in select list"
-        # We group by workout ID and order by the max started_at for that workout (which is just started_at)
+        # Recent history – last 10 workouts, only this exercise's sets (less data than loading all sets)
         recent_workout_ids_result = await db.execute(
             select(WorkoutSet.workout_id)
             .join(Workout, Workout.id == WorkoutSet.workout_id)
@@ -192,29 +137,36 @@ async def exercise_stats(
         recent_ids = [r[0] for r in recent_workout_ids_result.all() if r[0] is not None]
         recent_history = []
         if recent_ids:
-            history_result = await db.execute(
-                select(Workout)
-                .where(Workout.id.in_(recent_ids))
-                .options(selectinload(Workout.sets))
-                .order_by(Workout.started_at.desc())
+            sets_result = await db.execute(
+                select(WorkoutSet)
+                .where(
+                    WorkoutSet.workout_id.in_(recent_ids),
+                    WorkoutSet.exercise_id == exercise_id,
+                )
+                .options(selectinload(WorkoutSet.workout))
+                .order_by(WorkoutSet.set_order)
             )
-            for workout in history_result.scalars().all():
-                ex_sets = [s for s in workout.sets if s.exercise_id == exercise_id]
-                recent_history.append({
-                    "workout_id": workout.id,
-                    "started_at": workout.started_at.isoformat() if workout.started_at else None,
-                    "sets": [
-                        {
-                            "set_order": s.set_order,
-                            "weight": float(s.weight) if s.weight is not None else None,
-                            "reps": int(s.reps) if s.reps is not None else None,
-                            "duration_seconds": int(s.duration_seconds) if s.duration_seconds is not None else None,
-                            "set_label": s.set_label.value if s.set_label else None,
-                            "is_pr": s.is_pr,
-                        }
-                        for s in sorted(ex_sets, key=lambda x: x.set_order or 0)
-                    ],
+            sets_list = sets_result.scalars().all()
+            # Group by workout, preserve order by most recent first
+            by_workout: dict = {}
+            for s in sets_list:
+                wid = s.workout_id
+                if wid not in by_workout:
+                    by_workout[wid] = {"workout_id": wid, "started_at": s.workout.started_at.isoformat() if s.workout and s.workout.started_at else None, "sets": []}
+                by_workout[wid]["sets"].append({
+                    "set_order": s.set_order,
+                    "weight": float(s.weight) if s.weight is not None else None,
+                    "reps": int(s.reps) if s.reps is not None else None,
+                    "duration_seconds": int(s.duration_seconds) if s.duration_seconds is not None else None,
+                    "set_label": s.set_label.value if s.set_label else None,
+                    "is_pr": s.is_pr,
                 })
+            # Order by started_at desc to match "last 10" order
+            recent_history = sorted(
+                by_workout.values(),
+                key=lambda x: x["started_at"] or "",
+                reverse=True,
+            )
 
         return {
             "exercise_id": exercise_id,

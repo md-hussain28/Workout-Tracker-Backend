@@ -60,6 +60,45 @@ async def get_weight_at_date(
     return float(a) if a is not None else None
 
 
+async def get_weights_for_dates(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    at_dates: list[datetime],
+) -> dict[str, float]:
+    """
+    Return weight_kg for each date: key = date isoformat, value = closest BodyLog weight.
+    One query fetches all logs in range; then for each at_date we pick latest on or before, else earliest after.
+    """
+    if not at_dates:
+        return {}
+    lo = min(at_dates) - timedelta(days=1)
+    hi = max(at_dates) + timedelta(days=1)
+    result = await db.execute(
+        select(BodyLog.created_at, BodyLog.weight_kg)
+        .where(BodyLog.user_id == user_id, BodyLog.created_at >= lo, BodyLog.created_at <= hi)
+        .order_by(BodyLog.created_at)
+    )
+    rows = result.all()
+    if not rows:
+        return {}
+    # For each at_date, find closest: prefer latest <= at_date, else earliest > at_date
+    out: dict[str, float] = {}
+    for at_date in at_dates:
+        before_w = None
+        after_w = None
+        for created_at, weight_kg in rows:
+            if created_at and weight_kg is not None:
+                if created_at <= at_date:
+                    before_w = float(weight_kg)
+                else:
+                    after_w = float(weight_kg)
+                    break
+        w = before_w if before_w is not None else after_w
+        if w is not None:
+            out[at_date.date().isoformat()] = w
+    return out
+
+
 # ── UserBio ──────────────────────────────────────────────────────────────
 
 @router.get("/bio", response_model=Optional[UserBioRead])
