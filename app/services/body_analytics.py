@@ -35,6 +35,10 @@ def calc_bmr(weight_kg: float, height_cm: float, age: int, sex: str) -> float:
     return round(base + 5 if sex == "male" else base - 161, 1)
 
 
+# U.S. Navy body fat formula uses INCHES. 1 in = 2.54 cm.
+CM_TO_IN = 1.0 / 2.54
+
+
 def calc_navy_bf(
     sex: str,
     height_cm: float,
@@ -42,22 +46,28 @@ def calc_navy_bf(
     neck_cm: float,
     hips_cm: Optional[float] = None,
 ) -> Optional[float]:
-    """U.S. Navy body fat % formula. Returns None if inputs missing."""
-    if waist_cm is None or neck_cm is None or waist_cm <= neck_cm:
+    """U.S. Navy body fat % formula. Inputs in cm; converted to inches for formula."""
+    if waist_cm is None or neck_cm is None or waist_cm <= neck_cm or height_cm <= 0:
         return None
     try:
+        waist_in = waist_cm * CM_TO_IN
+        neck_in = neck_cm * CM_TO_IN
+        height_in = height_cm * CM_TO_IN
         if sex == "male":
+            # Male: 86.010×log10(abdomen−neck) − 70.041×log10(height) + 36.76 (inches)
             bf = (
-                86.010 * math.log10(waist_cm - neck_cm)
-                - 70.041 * math.log10(height_cm)
+                86.010 * math.log10(waist_in - neck_in)
+                - 70.041 * math.log10(height_in)
                 + 36.76
             )
         else:
             if hips_cm is None:
                 return None
+            hips_in = hips_cm * CM_TO_IN
+            # Female: 163.205×log10(waist+hip−neck) − 97.684×log10(height) − 78.387 (inches)
             bf = (
-                163.205 * math.log10(waist_cm + hips_cm - neck_cm)
-                - 97.684 * math.log10(height_cm)
+                163.205 * math.log10(waist_in + hips_in - neck_in)
+                - 97.684 * math.log10(height_in)
                 - 78.387
             )
         return round(max(bf, 2.0), 1)  # clamp floor at 2%
