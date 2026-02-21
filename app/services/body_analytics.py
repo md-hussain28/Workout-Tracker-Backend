@@ -12,6 +12,26 @@ from typing import Any, Optional
 from app.core.nhanes_data import NHANES_STATS, PAIRED_KEYS, get_population_stats
 
 
+def _normalize_measurements(measurements: dict[str, float]) -> dict[str, float]:
+    """Lowercase keys and map formula aliases so logged data matches equation inputs.
+    E.g. abdomen -> waist, hip -> hips (formula uses waist/hips/weight).
+    """
+    out: dict[str, float] = {}
+    for k, v in measurements.items():
+        if v is None:
+            continue
+        try:
+            out[k.lower().strip()] = float(v)
+        except (TypeError, ValueError):
+            continue
+    # Map common aliases to canonical keys used by formulas
+    if "abdomen" in out and "waist" not in out:
+        out["waist"] = out["abdomen"]
+    if "hip" in out and "hips" not in out:
+        out["hips"] = out["hip"]
+    return out
+
+
 # ── Percentile helpers (scipy-free) ──────────────────────────────────────
 
 def _z_to_percentile(z: float) -> float:
@@ -275,16 +295,18 @@ def compute_all_stats(
 ) -> dict[str, Any]:
     """Run ALL calculations and return a flat dict ready for JSONB storage."""
     stats: dict[str, Any] = {}
+    # Normalize so abdomen->waist, hip->hips, lowercase keys; formulas use waist/hips/chest/neck
+    m = _normalize_measurements(measurements) if measurements else {}
 
     # BMR
     stats["bmr"] = calc_bmr(weight_kg, height_cm, age, sex)
 
     # Body fat: prefer manual, fallback to Navy formula
     bf = manual_bf
-    if bf is None and measurements:
-        waist = measurements.get("waist")
-        neck = measurements.get("neck")
-        hips = measurements.get("hips")
+    if bf is None and m:
+        waist = m.get("waist")
+        neck = m.get("neck")
+        hips = m.get("hips")
         bf = calc_navy_bf(sex, height_cm, waist, neck, hips)
     stats["bf_navy"] = bf
 
@@ -294,11 +316,10 @@ def compute_all_stats(
     stats["bf_rfm"] = None
     stats["bf_multi"] = None
 
-    if measurements:
-        waist = measurements.get("waist")
-        hips = measurements.get("hips")
-        chest = measurements.get("chest")
-        
+    if m:
+        waist = m.get("waist")
+        hips = m.get("hips")
+        chest = m.get("chest")
         stats["bf_army"] = calc_army_bf(sex, weight_kg, waist, hips)
         stats["bf_rfm"] = calc_rfm_bf(sex, height_cm, waist)
         stats["bf_multi"] = calc_multi_girth_bf(weight_kg, height_cm, sex, waist, chest, hips)
@@ -306,11 +327,11 @@ def compute_all_stats(
     # FFMI
     stats["ffmi"] = calc_ffmi(weight_kg, height_cm, bf)
 
-    # Percentiles & rank
-    if measurements:
-        stats["percentiles"] = calc_percentiles(sex, measurements)
-        stats["aesthetic_rank"] = calc_aesthetic_rank(stats["percentiles"], measurements)
-        stats["symmetry"] = calc_symmetry(measurements)
+    # Percentiles & rank (use normalized dict so all keys are lowercase/canonical)
+    if m:
+        stats["percentiles"] = calc_percentiles(sex, m)
+        stats["aesthetic_rank"] = calc_aesthetic_rank(stats["percentiles"], m)
+        stats["symmetry"] = calc_symmetry(m)
     else:
         stats["percentiles"] = {}
         stats["aesthetic_rank"] = None
