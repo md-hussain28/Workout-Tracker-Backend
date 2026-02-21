@@ -55,8 +55,19 @@ def calc_bmr(weight_kg: float, height_cm: float, age: int, sex: str) -> float:
     return round(base + 5 if sex == "male" else base - 161, 1)
 
 
-# U.S. Navy body fat formula uses INCHES. 1 in = 2.54 cm.
+# U.S. Navy / Army body fat formulas use INCHES and POUNDS.
 CM_TO_IN = 1.0 / 2.54
+KG_TO_LB = 2.20462
+
+# Plausible body fat % range; clamp all formulas to avoid unit/input errors.
+BF_PCT_MIN = 2.0
+BF_PCT_MAX = 60.0
+
+
+def _clamp_bf(pct: float | None) -> float | None:
+    if pct is None:
+        return None
+    return round(max(BF_PCT_MIN, min(BF_PCT_MAX, pct)), 1)
 
 
 def calc_navy_bf(
@@ -90,7 +101,7 @@ def calc_navy_bf(
                 - 97.684 * math.log10(height_in)
                 - 78.387
             )
-        return round(max(bf, 2.0), 1)  # clamp floor at 2%
+        return _clamp_bf(bf)
     except (ValueError, ZeroDivisionError):
         return None
 
@@ -113,21 +124,25 @@ def calc_army_bf(
     waist_cm: Optional[float] = None,
     hips_cm: Optional[float] = None,
 ) -> Optional[float]:
-    """U.S. Army 2024 body fat formula (validated). Inputs in cm/kg."""
-    if sex != "male" or weight_kg <= 0 or not waist_cm or not hips_cm:
+    """U.S. Army 2024 one-site formula. Uses abdomen (waist) in INCHES and weight in POUNDS."""
+    if weight_kg <= 0 or not waist_cm:
         return None
-    
-    # 2024 Army equation For men: %BF ≈ -38.32 + 2.23×abdomen + 0.68×hip -0.43×waist -0.16×weight
-    # Assumes abdomen approx equals waist if only waist is given.
-    abdomen = waist_cm
-    bf = -38.32 + 2.23 * abdomen + 0.68 * hips_cm - 0.43 * waist_cm - 0.16 * weight_kg
-    return round(max(bf, 2.0), 1)
+    # 2024 Army: one-site (abdominal circumference) + weight. All in inches and pounds.
+    abdomen_in = waist_cm * CM_TO_IN
+    weight_lb = weight_kg * KG_TO_LB
+    if sex == "male":
+        # Males: % = -26.97 - (0.12 × weight_lb) + (1.99 × abdomen_in)
+        bf = -26.97 - (0.12 * weight_lb) + (1.99 * abdomen_in)
+    else:
+        # Females: % = -9.15 - (0.015 × weight_lb) + (1.27 × abdomen_in)
+        bf = -9.15 - (0.015 * weight_lb) + (1.27 * abdomen_in)
+    return _clamp_bf(bf)
 
 
 def calc_cun_bae_bf(
     weight_kg: float, height_cm: float, age: int, sex: str
 ) -> Optional[float]:
-    """CUN-BAE body fat equation using BMI, age, and sex."""
+    """CUN-BAE body fat equation using BMI, age, and sex. No circumferences."""
     if height_cm <= 0 or weight_kg <= 0:
         return None
     height_m = height_cm / 100
@@ -144,22 +159,20 @@ def calc_cun_bae_bf(
         - (0.005 * bmi**2 * s)
         + (0.00021 * bmi**2 * age)
     )
-    return round(max(bf, 2.0), 1)
+    return _clamp_bf(bf)
 
 
 def calc_rfm_bf(
     sex: str, height_cm: float, waist_cm: Optional[float] = None
 ) -> Optional[float]:
-    """Relative Fat Mass (RFM) body fat equation."""
+    """Relative Fat Mass (RFM). Height and waist in same units (cm); ratio is unit-invariant."""
     if height_cm <= 0 or not waist_cm or waist_cm <= 0:
         return None
     if sex == "male":
-        # Men: 64 - (20 × height/waist)
         bf = 64 - (20 * height_cm / waist_cm)
     else:
-        # Women: 76 - (20 × height/waist)
         bf = 76 - (20 * height_cm / waist_cm)
-    return round(max(bf, 2.0), 1)
+    return _clamp_bf(bf)
 
 
 def calc_multi_girth_bf(
@@ -170,18 +183,19 @@ def calc_multi_girth_bf(
     chest_cm: Optional[float] = None,
     hips_cm: Optional[float] = None,
 ) -> Optional[float]:
-    """Multi-Girth Regression body fat estimate using Waist/chest/hip + BMI proxy."""
+    """Multi-girth proxy: waist/chest/hip in INCHES (formula coefficients expect ~30–40 range)."""
     if height_cm <= 0 or weight_kg <= 0 or not waist_cm or not chest_cm or not hips_cm:
         return None
     height_m = height_cm / 100
     bmi = weight_kg / (height_m**2)
-    
+    waist_in = waist_cm * CM_TO_IN
+    chest_in = chest_cm * CM_TO_IN
+    hips_in = hips_cm * CM_TO_IN
     if sex == "male":
-        bf = 0.5 * bmi + 0.4 * waist_cm + 0.2 * hips_cm - 0.3 * chest_cm - 15
+        bf = 0.5 * bmi + 0.4 * waist_in + 0.2 * hips_in - 0.3 * chest_in - 15
     else:
-        bf = 0.5 * bmi + 0.3 * waist_cm + 0.4 * hips_cm - 0.2 * chest_cm - 10
-    
-    return round(max(bf, 2.0), 1)
+        bf = 0.5 * bmi + 0.3 * waist_in + 0.4 * hips_in - 0.2 * chest_in - 10
+    return _clamp_bf(bf)
 
 
 # ── Symmetry ─────────────────────────────────────────────────────────────
