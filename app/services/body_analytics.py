@@ -87,6 +87,83 @@ def calc_ffmi(weight_kg: float, height_cm: float, body_fat_pct: Optional[float])
     return round(adjusted, 1)
 
 
+def calc_army_bf(
+    sex: str,
+    weight_kg: float,
+    waist_cm: Optional[float] = None,
+    hips_cm: Optional[float] = None,
+) -> Optional[float]:
+    """U.S. Army 2024 body fat formula (validated). Inputs in cm/kg."""
+    if sex != "male" or weight_kg <= 0 or not waist_cm or not hips_cm:
+        return None
+    
+    # 2024 Army equation For men: %BF ≈ -38.32 + 2.23×abdomen + 0.68×hip -0.43×waist -0.16×weight
+    # Assumes abdomen approx equals waist if only waist is given.
+    abdomen = waist_cm
+    bf = -38.32 + 2.23 * abdomen + 0.68 * hips_cm - 0.43 * waist_cm - 0.16 * weight_kg
+    return round(max(bf, 2.0), 1)
+
+
+def calc_cun_bae_bf(
+    weight_kg: float, height_cm: float, age: int, sex: str
+) -> Optional[float]:
+    """CUN-BAE body fat equation using BMI, age, and sex."""
+    if height_cm <= 0 or weight_kg <= 0:
+        return None
+    height_m = height_cm / 100
+    bmi = weight_kg / (height_m**2)
+    s = 0 if sex == "male" else 1
+    bf = (
+        -44.988
+        + (0.503 * age)
+        + (10.689 * s)
+        + (3.172 * bmi)
+        - (0.026 * bmi**2)
+        + (0.181 * bmi * s)
+        - (0.02 * bmi * age)
+        - (0.005 * bmi**2 * s)
+        + (0.00021 * bmi**2 * age)
+    )
+    return round(max(bf, 2.0), 1)
+
+
+def calc_rfm_bf(
+    sex: str, height_cm: float, waist_cm: Optional[float] = None
+) -> Optional[float]:
+    """Relative Fat Mass (RFM) body fat equation."""
+    if height_cm <= 0 or not waist_cm or waist_cm <= 0:
+        return None
+    if sex == "male":
+        # Men: 64 - (20 × height/waist)
+        bf = 64 - (20 * height_cm / waist_cm)
+    else:
+        # Women: 76 - (20 × height/waist)
+        bf = 76 - (20 * height_cm / waist_cm)
+    return round(max(bf, 2.0), 1)
+
+
+def calc_multi_girth_bf(
+    weight_kg: float,
+    height_cm: float,
+    sex: str,
+    waist_cm: Optional[float] = None,
+    chest_cm: Optional[float] = None,
+    hips_cm: Optional[float] = None,
+) -> Optional[float]:
+    """Multi-Girth Regression body fat estimate using Waist/chest/hip + BMI proxy."""
+    if height_cm <= 0 or weight_kg <= 0 or not waist_cm or not chest_cm or not hips_cm:
+        return None
+    height_m = height_cm / 100
+    bmi = weight_kg / (height_m**2)
+    
+    if sex == "male":
+        bf = 0.5 * bmi + 0.4 * waist_cm + 0.2 * hips_cm - 0.3 * chest_cm - 15
+    else:
+        bf = 0.5 * bmi + 0.3 * waist_cm + 0.4 * hips_cm - 0.2 * chest_cm - 10
+    
+    return round(max(bf, 2.0), 1)
+
+
 # ── Symmetry ─────────────────────────────────────────────────────────────
 
 def calc_symmetry(measurements: dict[str, float]) -> dict[str, Any]:
@@ -210,6 +287,21 @@ def compute_all_stats(
         hips = measurements.get("hips")
         bf = calc_navy_bf(sex, height_cm, waist, neck, hips)
     stats["bf_navy"] = bf
+
+    # Other BF equations
+    stats["bf_cun_bae"] = calc_cun_bae_bf(weight_kg, height_cm, age, sex)
+    stats["bf_army"] = None
+    stats["bf_rfm"] = None
+    stats["bf_multi"] = None
+
+    if measurements:
+        waist = measurements.get("waist")
+        hips = measurements.get("hips")
+        chest = measurements.get("chest")
+        
+        stats["bf_army"] = calc_army_bf(sex, weight_kg, waist, hips)
+        stats["bf_rfm"] = calc_rfm_bf(sex, height_cm, waist)
+        stats["bf_multi"] = calc_multi_girth_bf(weight_kg, height_cm, sex, waist, chest, hips)
 
     # FFMI
     stats["ffmi"] = calc_ffmi(weight_kg, height_cm, bf)

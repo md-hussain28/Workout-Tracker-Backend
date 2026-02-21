@@ -116,8 +116,14 @@ async def get_workout(
                 for s in workout.sets
                 if s.weight is not None and s.reps is not None
             )
-            active_sec = sum(s.time_under_tension_seconds or 0 for s in workout.sets)
-            rest_sec = sum(s.rest_seconds_after or 0 for s in workout.sets)
+            active_sec = sum(
+                (s.time_under_tension_seconds if s.time_under_tension_seconds is not None else 45) 
+                for s in workout.sets
+            )
+            rest_sec = sum(
+                (s.rest_seconds_after if s.rest_seconds_after is not None else 90) 
+                for s in workout.sets
+            )
             cal = estimate_calories(
                 weight_kg,
                 duration_min,
