@@ -210,20 +210,17 @@ async def add_set_to_workout(
     if not workout:
         raise HTTPException(status_code=404, detail="Workout not found")
 
-    # Distinct exercise count in this workout
-    distinct_ex = await db.execute(
-        select(func.count(func.distinct(WorkoutSet.exercise_id))).where(
-            WorkoutSet.workout_id == workout_id
-        )
+    # One query: distinct exercise count and sets count for this exercise
+    from sqlalchemy import case
+    counts_row = await db.execute(
+        select(
+            func.count(func.distinct(WorkoutSet.exercise_id)).label("n_exercises"),
+            func.count(case((WorkoutSet.exercise_id == payload.exercise_id, 1))).label("n_sets_this_ex"),
+        ).where(WorkoutSet.workout_id == workout_id)
     )
-    n_exercises = distinct_ex.scalar() or 0
-    sets_for_exercise = await db.execute(
-        select(func.count(WorkoutSet.id)).where(
-            WorkoutSet.workout_id == workout_id,
-            WorkoutSet.exercise_id == payload.exercise_id,
-        )
-    )
-    n_sets_this_ex = sets_for_exercise.scalar() or 0
+    row = counts_row.one_or_none()
+    n_exercises = int(row.n_exercises or 0) if row else 0
+    n_sets_this_ex = int(row.n_sets_this_ex or 0) if row else 0
 
     if n_sets_this_ex >= MAX_SETS_PER_EXERCISE_PER_SESSION:
         raise HTTPException(

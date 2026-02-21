@@ -258,38 +258,34 @@ async def volume_history_by_muscle(
     if to_date:
         conditions.append(Workout.started_at <= to_date)
         
+    from app.models.muscle_group import MuscleGroup
+
     stmt = (
         select(
             Workout.started_at,
-            Exercise.primary_muscle_group_id,
-            func.sum(WorkoutSet.weight * WorkoutSet.reps).label("volume")
+            func.coalesce(MuscleGroup.name, "Unknown").label("mg_name"),
+            func.sum(WorkoutSet.weight * WorkoutSet.reps).label("volume"),
         )
-        .join(WorkoutSet, Workout.id == WorkoutSet.workout_id)
+        .select_from(WorkoutSet)
+        .join(Workout, Workout.id == WorkoutSet.workout_id)
         .join(Exercise, Exercise.id == WorkoutSet.exercise_id)
+        .outerjoin(MuscleGroup, MuscleGroup.id == Exercise.primary_muscle_group_id)
         .where(
             WorkoutSet.weight.isnot(None),
             WorkoutSet.reps.isnot(None),
             Exercise.primary_muscle_group_id.isnot(None),
             *conditions
         )
-        .group_by(Workout.started_at, Exercise.primary_muscle_group_id)
+        .group_by(Workout.started_at, MuscleGroup.name)
         .order_by(Workout.started_at)
     )
-    
     result = await db.execute(stmt)
     rows = result.all()
-    
-    # We also need muscle names
-    from app.models.muscle_group import MuscleGroup
-    mg_result = await db.execute(select(MuscleGroup.id, MuscleGroup.name))
-    mg_map = {row.id: row.name for row in mg_result.all()}
-    
-    # Process into Date -> { muscle: vol }
+
     data_by_date: dict[str, dict[str, float]] = {}
-    
     for r in rows:
         d = r.started_at.date().isoformat()
-        mg_name = mg_map.get(r.primary_muscle_group_id, "Unknown")
+        mg_name = r.mg_name or "Unknown"
         vol = float(r.volume or 0)
         
         if d not in data_by_date:
@@ -315,31 +311,23 @@ async def muscle_distribution(
     if to_date:
         conditions.append(Workout.started_at <= to_date)
 
+    from app.models.muscle_group import MuscleGroup
+
     stmt = (
         select(
-            Exercise.primary_muscle_group_id,
-            func.count(WorkoutSet.id).label("set_count")
+            func.coalesce(MuscleGroup.name, "Unknown").label("name"),
+            func.count(WorkoutSet.id).label("set_count"),
         )
-        .join(WorkoutSet, Exercise.id == WorkoutSet.exercise_id)
+        .select_from(WorkoutSet)
+        .join(Exercise, Exercise.id == WorkoutSet.exercise_id)
         .join(Workout, Workout.id == WorkoutSet.workout_id)
-        .where(
-            Exercise.primary_muscle_group_id.isnot(None),
-            *conditions
-        )
-        .group_by(Exercise.primary_muscle_group_id)
+        .outerjoin(MuscleGroup, MuscleGroup.id == Exercise.primary_muscle_group_id)
+        .where(Exercise.primary_muscle_group_id.isnot(None), *conditions)
+        .group_by(MuscleGroup.name)
     )
-    
     result = await db.execute(stmt)
     rows = result.all()
-    
-    from app.models.muscle_group import MuscleGroup
-    mg_result = await db.execute(select(MuscleGroup.id, MuscleGroup.name))
-    mg_map = {row.id: row.name for row in mg_result.all()}
-    
-    return [
-        {"name": mg_map.get(r.primary_muscle_group_id, "Unknown"), "value": r.set_count}
-        for r in rows
-    ]
+    return [{"name": r.name or "Unknown", "value": r.set_count} for r in rows]
 
 
 @router.get("/workout-density")
@@ -390,10 +378,22 @@ async def plateau_radar(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Radar chart data: Top 6 exercises by volume.
+    Radar chart data: Top 6 exercises by session count.
     Compare: "All Time Best Volume" vs "Average of Last 3 Workouts Volume".
     """
-    # Single query: (exercise_id, exercise_name, workout_id, started_at, volume) for all weight+reps sets
+    # Subquery: top 6 exercise IDs by number of distinct workouts (most practiced)
+    top_exercise_subq = (
+        select(WorkoutSet.exercise_id)
+        .join(Workout, Workout.id == WorkoutSet.workout_id)
+        .where(
+            WorkoutSet.weight.isnot(None),
+            WorkoutSet.reps.isnot(None),
+        )
+        .group_by(WorkoutSet.exercise_id)
+        .order_by(func.count(func.distinct(WorkoutSet.workout_id)).desc())
+        .limit(6)
+    )
+    # Only fetch per-workout volume for those 6 exercises
     stmt = (
         select(
             Exercise.id,
@@ -407,6 +407,7 @@ async def plateau_radar(
         .where(
             WorkoutSet.weight.isnot(None),
             WorkoutSet.reps.isnot(None),
+            WorkoutSet.exercise_id.in_(top_exercise_subq),
         )
         .group_by(Exercise.id, Exercise.name, Workout.id, Workout.started_at)
     )
@@ -426,15 +427,9 @@ async def plateau_radar(
             reverse=True,
         )
 
-    # Top 6 by number of sessions (most practiced)
-    top_6 = sorted(
-        by_exercise.items(),
-        key=lambda item: len(item[1]),
-        reverse=True,
-    )[:6]
-
+    # Already limited to top 6 exercises; preserve order by session count via list order
     valid_data = []
-    for (ex_id, ex_name), history in top_6:
+    for (ex_id, ex_name), history in by_exercise.items():
         if not history:
             continue
         all_time_best = max(h[1] for h in history)

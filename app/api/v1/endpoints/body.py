@@ -218,12 +218,22 @@ def _enrich_computed_stats(
     return read
 
 
+# Max logs to enrich per request (recompute bf_* when missing); rest return as stored.
+MAX_ENRICH_PER_LIST = 100
+
+
+def _needs_bf_enrich(log: BodyLog) -> bool:
+    """True if log has no bio or is missing any bf_* key in computed_stats."""
+    existing = log.computed_stats or {}
+    return not all(existing.get(k) is not None for k in BF_KEYS)
+
+
 @router.get("/log", response_model=list[BodyLogRead])
 async def list_body_logs(
     days: Optional[int] = Query(None, description="Filter to last N days (7, 30, 90). Omit for all."),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get body log history, optionally filtered by recent days. Enriches with bf_* stats when missing."""
+    """Get body log history, optionally filtered by recent days. Enriches with bf_* stats when missing (up to MAX_ENRICH_PER_LIST)."""
     stmt = (
         select(BodyLog)
         .where(BodyLog.user_id == USER_ID)
@@ -237,7 +247,15 @@ async def list_body_logs(
     logs = result.scalars().all()
     bio_result = await db.execute(select(UserBio).where(UserBio.id == USER_ID))
     bio = bio_result.scalar_one_or_none()
-    return [_enrich_computed_stats(log, bio) for log in logs]
+    enriched = 0
+    out = []
+    for log in logs:
+        if _needs_bf_enrich(log) and enriched < MAX_ENRICH_PER_LIST and bio and log.weight_kg:
+            out.append(_enrich_computed_stats(log, bio))
+            enriched += 1
+        else:
+            out.append(BodyLogRead.model_validate(log))
+    return out
 
 
 @router.get("/log/latest", response_model=Optional[BodyLogRead])

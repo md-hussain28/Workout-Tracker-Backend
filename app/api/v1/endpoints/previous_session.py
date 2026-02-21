@@ -26,35 +26,38 @@ async def get_previous_session_sets(
     Use when adding a set to show "last time you did X". Pass exclude_workout_id
     (e.g. current workout) to get the *previous* session instead of the current one.
     """
-    # Workout IDs that have this exercise, ordered by workout started_at desc
-    stmt = (
+    # Subquery: single most recent workout id that has this exercise
+    subq = (
         select(Workout.id)
         .join(WorkoutSet, WorkoutSet.workout_id == Workout.id)
         .where(WorkoutSet.exercise_id == exercise_id)
         .order_by(Workout.started_at.desc())
+        .limit(1)
     )
     if exclude_workout_id is not None:
-        stmt = stmt.where(Workout.id != exclude_workout_id)
-    stmt = stmt.limit(1)
-    workout_id_row = await db.execute(stmt)
-    workout_id = workout_id_row.scalar_one_or_none()
-    if not workout_id:
+        subq = subq.where(Workout.id != exclude_workout_id)
+    subq = subq.subquery()
+
+    # One query: sets for this exercise in that workout, with workout started_at
+    result = await db.execute(
+        select(WorkoutSet, Workout.started_at)
+        .join(Workout, Workout.id == WorkoutSet.workout_id)
+        .where(
+            WorkoutSet.exercise_id == exercise_id,
+            WorkoutSet.workout_id.in_(subq),
+        )
+        .order_by(WorkoutSet.set_order, WorkoutSet.id)
+    )
+    rows = result.all()
+    if not rows:
         return {"workout_id": None, "sets": [], "message": "No previous session for this exercise."}
 
-    result = await db.execute(
-        select(Workout)
-        .where(Workout.id == workout_id)
-        .options(selectinload(Workout.sets).selectinload(WorkoutSet.exercise))
-    )
-    workout = result.scalar_one_or_none()
-    if not workout:
-        return {"workout_id": None, "sets": []}
-
-    sets_for_exercise = [s for s in workout.sets if s.exercise_id == exercise_id]
-    sets_for_exercise.sort(key=lambda s: (s.set_order, s.id))
+    first = rows[0]
+    workout_id = first[0].workout_id
+    started_at = first[1]
     return {
-        "workout_id": workout.id,
-        "workout_started_at": workout.started_at.isoformat() if workout.started_at else None,
+        "workout_id": workout_id,
+        "workout_started_at": started_at.isoformat() if started_at else None,
         "sets": [
             {
                 "id": s.id,
@@ -64,6 +67,6 @@ async def get_previous_session_sets(
                 "duration_seconds": s.duration_seconds,
                 "set_label": s.set_label.value if s.set_label else None,
             }
-            for s in sets_for_exercise
+            for s, _ in rows
         ],
     }

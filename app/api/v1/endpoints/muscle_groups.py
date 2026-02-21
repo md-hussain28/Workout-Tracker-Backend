@@ -94,10 +94,10 @@ async def get_muscle_group_stats(
     muscle_group_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    """Get statistics for a muscle group."""
+    """Get statistics for a muscle group. Aggregations done in SQL."""
     from app.models.exercise import Exercise
     from app.models.workout import Workout, WorkoutSet
-    from sqlalchemy import func, case, desc
+    from sqlalchemy import case, func
 
     # Verify existence
     result = await db.execute(select(MuscleGroup).where(MuscleGroup.id == muscle_group_id))
@@ -105,78 +105,91 @@ async def get_muscle_group_stats(
     if not mg:
         raise HTTPException(status_code=404, detail="Muscle group not found")
 
-    # Base query: Sets using exercises that involve this muscle group
-    stmt = (
-        select(WorkoutSet, Exercise, Workout.started_at)
+    # Volume expression: weight*reps if weight > 0 else duration_seconds
+    vol_expr = case(
+        (WorkoutSet.weight > 0, WorkoutSet.weight * func.coalesce(WorkoutSet.reps, 0)),
+        else_=func.coalesce(WorkoutSet.duration_seconds, 0),
+    )
+    mg_filter = (
+        (Exercise.primary_muscle_group_id == muscle_group_id)
+        | (Exercise.secondary_muscle_group_id == muscle_group_id)
+        | (Exercise.tertiary_muscle_group_id == muscle_group_id)
+    )
+
+    # 1) Totals and role distribution in one query
+    totals_stmt = (
+        select(
+            func.count(func.distinct(WorkoutSet.workout_id)).label("total_workouts"),
+            func.count(WorkoutSet.id).label("total_sets"),
+            func.coalesce(func.sum(vol_expr), 0).label("total_volume"),
+            func.sum(case((Exercise.primary_muscle_group_id == muscle_group_id, 1), else_=0)).label("primary_count"),
+            func.sum(case((Exercise.secondary_muscle_group_id == muscle_group_id, 1), else_=0)).label("secondary_count"),
+            func.sum(case((Exercise.tertiary_muscle_group_id == muscle_group_id, 1), else_=0)).label("tertiary_count"),
+        )
+        .select_from(WorkoutSet)
         .join(Exercise, Exercise.id == WorkoutSet.exercise_id)
         .join(Workout, Workout.id == WorkoutSet.workout_id)
-        .where(
-            (Exercise.primary_muscle_group_id == muscle_group_id)
-            | (Exercise.secondary_muscle_group_id == muscle_group_id)
-            | (Exercise.tertiary_muscle_group_id == muscle_group_id)
-        )
+        .where(mg_filter)
     )
-    result = await db.execute(stmt)
-    rows = result.all()
+    tot_row = (await db.execute(totals_stmt)).one_or_none()
+    total_workouts = int(tot_row.total_workouts or 0) if tot_row else 0
+    total_sets = int(tot_row.total_sets or 0) if tot_row else 0
+    total_volume = float(tot_row.total_volume or 0) if tot_row else 0.0
+    role_dist = {
+        "primary": int(tot_row.primary_count or 0) if tot_row else 0,
+        "secondary": int(tot_row.secondary_count or 0) if tot_row else 0,
+        "tertiary": int(tot_row.tertiary_count or 0) if tot_row else 0,
+    }
 
-    total_workouts = set()
-    total_sets = 0
-    total_volume = 0.0
-    role_dist = {"primary": 0, "secondary": 0, "tertiary": 0}
-    volume_by_date = {}
-    exercises_stats = {}
-
-    for s, ex, started_at in rows:
-        weight = float(s.weight or 0)
-        reps = float(s.reps or 0)
-        duration = float(s.duration_seconds or 0)
-        
-        # Calculate volume for this set
-        # Using simple weight * reps or duration as volume proxy
-        vol = (weight * reps) if weight > 0 else duration
-
-        total_workouts.add(s.workout_id)
-        total_sets += 1
-        total_volume += vol
-
-        # Role
-        if ex.primary_muscle_group_id == muscle_group_id:
-            role_dist["primary"] += 1
-        elif ex.secondary_muscle_group_id == muscle_group_id:
-            role_dist["secondary"] += 1
-        elif ex.tertiary_muscle_group_id == muscle_group_id:
-            role_dist["tertiary"] += 1
-
-        # History
-        date_str = started_at.isoformat().split("T")[0]
-        volume_by_date[date_str] = volume_by_date.get(date_str, 0) + vol
-
-        # Top Exercises
-        if ex.id not in exercises_stats:
-            exercises_stats[ex.id] = {"name": ex.name, "volume": 0.0, "set_count": 0}
-        exercises_stats[ex.id]["volume"] += vol
-        exercises_stats[ex.id]["set_count"] += 1
-
-    # Format response
+    # 2) Volume by date
+    history_stmt = (
+        select(
+            func.date(Workout.started_at).label("d"),
+            func.sum(vol_expr).label("vol"),
+        )
+        .select_from(WorkoutSet)
+        .join(Exercise, Exercise.id == WorkoutSet.exercise_id)
+        .join(Workout, Workout.id == WorkoutSet.workout_id)
+        .where(mg_filter, Workout.started_at.isnot(None))
+        .group_by(func.date(Workout.started_at))
+        .order_by(func.date(Workout.started_at))
+    )
+    history_rows = (await db.execute(history_stmt)).all()
     volume_history = [
-        {"date": d, "volume": round(v, 2)} 
-        for d, v in sorted(volume_by_date.items())
+        {"date": (r.d.isoformat() if hasattr(r.d, "isoformat") else str(r.d)), "volume": round(float(r.vol or 0), 2)}
+        for r in history_rows
     ]
-    
+
+    # 3) Top 10 exercises by volume
+    top_stmt = (
+        select(
+            Exercise.id,
+            Exercise.name,
+            func.sum(vol_expr).label("vol"),
+            func.count(WorkoutSet.id).label("set_count"),
+        )
+        .select_from(WorkoutSet)
+        .join(Exercise, Exercise.id == WorkoutSet.exercise_id)
+        .join(Workout, Workout.id == WorkoutSet.workout_id)
+        .where(mg_filter)
+        .group_by(Exercise.id, Exercise.name)
+        .order_by(func.sum(vol_expr).desc())
+        .limit(10)
+    )
+    top_rows = (await db.execute(top_stmt)).all()
     top_exercises = [
-        {"id": eid, "name": stat["name"], "volume": round(stat["volume"], 2), "set_count": stat["set_count"]}
-        for eid, stat in exercises_stats.items()
+        {"id": r.id, "name": r.name or "", "volume": round(float(r.vol or 0), 2), "set_count": int(r.set_count or 0)}
+        for r in top_rows
     ]
-    top_exercises.sort(key=lambda x: x["volume"], reverse=True)
 
     return {
         "id": mg.id,
         "name": mg.name,
         "color": mg.color,
-        "total_workouts": len(total_workouts),
+        "total_workouts": total_workouts,
         "total_sets": total_sets,
         "total_volume": round(total_volume, 2),
         "role_distribution": role_dist,
         "volume_history": volume_history,
-        "top_exercises": top_exercises[:10],  # Top 10
+        "top_exercises": top_exercises,
     }

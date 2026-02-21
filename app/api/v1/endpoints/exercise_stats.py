@@ -125,48 +125,44 @@ async def exercise_stats(
             for r in daily_rows if r.max_weight and float(r.max_weight) > 0
         ]
 
-        # Recent history – last 10 workouts, only this exercise's sets (less data than loading all sets)
-        recent_workout_ids_result = await db.execute(
+        # Recent history – one query: subquery for last 10 workout IDs, then their sets for this exercise
+        recent_ids_subq = (
             select(WorkoutSet.workout_id)
             .join(Workout, Workout.id == WorkoutSet.workout_id)
             .where(WorkoutSet.exercise_id == exercise_id)
             .group_by(WorkoutSet.workout_id)
             .order_by(func.max(Workout.started_at).desc())
             .limit(10)
+            .subquery()
         )
-        recent_ids = [r[0] for r in recent_workout_ids_result.all() if r[0] is not None]
-        recent_history = []
-        if recent_ids:
-            sets_result = await db.execute(
-                select(WorkoutSet)
-                .where(
-                    WorkoutSet.workout_id.in_(recent_ids),
-                    WorkoutSet.exercise_id == exercise_id,
-                )
-                .options(selectinload(WorkoutSet.workout))
-                .order_by(WorkoutSet.set_order)
+        sets_result = await db.execute(
+            select(WorkoutSet)
+            .where(
+                WorkoutSet.workout_id.in_(recent_ids_subq),
+                WorkoutSet.exercise_id == exercise_id,
             )
-            sets_list = sets_result.scalars().all()
-            # Group by workout, preserve order by most recent first
-            by_workout: dict = {}
-            for s in sets_list:
-                wid = s.workout_id
-                if wid not in by_workout:
-                    by_workout[wid] = {"workout_id": wid, "started_at": s.workout.started_at.isoformat() if s.workout and s.workout.started_at else None, "sets": []}
-                by_workout[wid]["sets"].append({
-                    "set_order": s.set_order,
-                    "weight": float(s.weight) if s.weight is not None else None,
-                    "reps": int(s.reps) if s.reps is not None else None,
-                    "duration_seconds": int(s.duration_seconds) if s.duration_seconds is not None else None,
-                    "set_label": s.set_label.value if s.set_label else None,
-                    "is_pr": s.is_pr,
-                })
-            # Order by started_at desc to match "last 10" order
-            recent_history = sorted(
-                by_workout.values(),
-                key=lambda x: x["started_at"] or "",
-                reverse=True,
-            )
+            .options(selectinload(WorkoutSet.workout))
+            .order_by(WorkoutSet.set_order)
+        )
+        sets_list = sets_result.scalars().all()
+        by_workout: dict = {}
+        for s in sets_list:
+            wid = s.workout_id
+            if wid not in by_workout:
+                by_workout[wid] = {"workout_id": wid, "started_at": s.workout.started_at.isoformat() if s.workout and s.workout.started_at else None, "sets": []}
+            by_workout[wid]["sets"].append({
+                "set_order": s.set_order,
+                "weight": float(s.weight) if s.weight is not None else None,
+                "reps": int(s.reps) if s.reps is not None else None,
+                "duration_seconds": int(s.duration_seconds) if s.duration_seconds is not None else None,
+                "set_label": s.set_label.value if s.set_label else None,
+                "is_pr": s.is_pr,
+            })
+        recent_history = sorted(
+            by_workout.values(),
+            key=lambda x: x["started_at"] or "",
+            reverse=True,
+        )
 
         return {
             "exercise_id": exercise_id,

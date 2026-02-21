@@ -38,6 +38,7 @@ class WorkoutSet(Base):
     __table_args__ = (
         Index("ix_workout_sets_workout_id", "workout_id"),
         Index("ix_workout_sets_exercise_id", "exercise_id"),
+        Index("ix_workout_sets_exercise_workout", "exercise_id", "workout_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
