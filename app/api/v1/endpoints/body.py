@@ -192,12 +192,38 @@ async def create_body_log(payload: BodyLogCreate, db: AsyncSession = Depends(get
     return log
 
 
+BF_KEYS = ("bf_army", "bf_cun_bae", "bf_rfm", "bf_multi", "bf_navy")
+
+
+def _enrich_computed_stats(
+    log: BodyLog,
+    bio: UserBio | None,
+) -> BodyLogRead:
+    """Build BodyLogRead from log, recomputing bf_* stats if missing (so old logs show predictions)."""
+    read = BodyLogRead.model_validate(log)
+    if not bio or not log.weight_kg:
+        return read
+    existing = (read.computed_stats or {}).copy()
+    if all(existing.get(k) is not None for k in BF_KEYS):
+        return read
+    stats = compute_all_stats(
+        weight_kg=log.weight_kg,
+        height_cm=bio.height_cm,
+        age=bio.age,
+        sex=bio.sex,
+        measurements=log.measurements,
+        manual_bf=log.body_fat_pct,
+    )
+    read.computed_stats = {**existing, **stats}
+    return read
+
+
 @router.get("/log", response_model=list[BodyLogRead])
 async def list_body_logs(
     days: Optional[int] = Query(None, description="Filter to last N days (7, 30, 90). Omit for all."),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get body log history, optionally filtered by recent days."""
+    """Get body log history, optionally filtered by recent days. Enriches with bf_* stats when missing."""
     stmt = (
         select(BodyLog)
         .where(BodyLog.user_id == USER_ID)
@@ -208,19 +234,27 @@ async def list_body_logs(
         stmt = stmt.where(BodyLog.created_at >= cutoff)
 
     result = await db.execute(stmt)
-    return result.scalars().all()
+    logs = result.scalars().all()
+    bio_result = await db.execute(select(UserBio).where(UserBio.id == USER_ID))
+    bio = bio_result.scalar_one_or_none()
+    return [_enrich_computed_stats(log, bio) for log in logs]
 
 
 @router.get("/log/latest", response_model=Optional[BodyLogRead])
 async def get_latest_body_log(db: AsyncSession = Depends(get_db)):
-    """Get the most recent body log entry."""
+    """Get the most recent body log entry. Enriches with bf_* stats when missing."""
     result = await db.execute(
         select(BodyLog)
         .where(BodyLog.user_id == USER_ID)
         .order_by(desc(BodyLog.created_at))
         .limit(1)
     )
-    return result.scalar_one_or_none()
+    log = result.scalar_one_or_none()
+    if not log:
+        return None
+    bio_result = await db.execute(select(UserBio).where(UserBio.id == USER_ID))
+    bio = bio_result.scalar_one_or_none()
+    return _enrich_computed_stats(log, bio)
 
 
 @router.patch("/log/{log_id}", response_model=BodyLogRead)
