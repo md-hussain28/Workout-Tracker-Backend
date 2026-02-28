@@ -1,6 +1,6 @@
 """Streak calculation endpoint."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
@@ -11,6 +11,9 @@ from app.models.workout import Workout
 
 router = APIRouter()
 
+# Limit scan to last ~14 months so the query stays fast with large history
+STREAK_LOOKBACK_DAYS = 430
+
 
 @router.get("")
 async def get_streak(db: AsyncSession = Depends(get_db)):
@@ -18,9 +21,11 @@ async def get_streak(db: AsyncSession = Depends(get_db)):
     Returns current workout streak (consecutive days with at least 1 workout),
     longest ever streak, and the date of the last workout.
     """
-    # Get all distinct workout dates, ordered descending
+    cutoff = datetime.now(timezone.utc).date() - timedelta(days=STREAK_LOOKBACK_DAYS)
+    # Bounded distinct workout dates (uses started_at index), ordered descending
     result = await db.execute(
         select(func.date(Workout.started_at).label("d"))
+        .where(Workout.started_at >= cutoff)
         .group_by(func.date(Workout.started_at))
         .order_by(func.date(Workout.started_at).desc())
     )

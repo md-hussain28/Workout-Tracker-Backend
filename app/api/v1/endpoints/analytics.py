@@ -207,15 +207,16 @@ async def consistency_calendar(
     """
     Calendar view: days with workouts. Optional month for one month; else full year.
     Returns list of { date, duration_seconds, tonnage } for color intensity.
+    Uses UTC for range so month boundaries are consistent regardless of server TZ.
     """
-    start = datetime(year, month or 1, 1)
+    start = datetime(year, month or 1, 1, tzinfo=timezone.utc)
     if month:
         if month == 12:
-            end = datetime(year + 1, 1, 1)
+            end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
         else:
-            end = datetime(year, month + 1, 1)
+            end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
     else:
-        end = datetime(year + 1, 1, 1)
+        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
 
     stmt = (
         select(
