@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.cache import app_cache
 from app.db.session import get_db
 from app.models.exercise import Exercise
 from app.schemas.exercise import ExerciseCreate, ExerciseRead, ExerciseUpdate
@@ -30,11 +31,18 @@ async def list_exercises(
     skip: int = 0,
     limit: int = 100,
 ):
-    """List exercises with optional pagination (includes muscle groups)."""
+    """List exercises with optional pagination (includes muscle groups). Cached 5 min for common case."""
+    cache_key = f"exercises:{skip}:{limit}"
+    cached = app_cache.get(cache_key)
+    if cached is not None:
+        return [ExerciseRead.model_validate(d) for d in cached]
+
     result = await db.execute(
         _exercise_query().order_by(Exercise.name).offset(skip).limit(limit)
     )
-    return list(result.scalars().all())
+    items = list(result.scalars().all())
+    app_cache.set(cache_key, [ExerciseRead.model_validate(ex).model_dump(mode="json") for ex in items])
+    return items
 
 
 @router.post("", response_model=ExerciseRead, status_code=201)
@@ -43,6 +51,7 @@ async def create_exercise(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new exercise (with optional muscle hierarchy and measurement mode)."""
+    app_cache.invalidate_prefix("exercises:")
     exercise = Exercise(**payload.model_dump())
     db.add(exercise)
     await db.flush()
@@ -74,6 +83,7 @@ async def update_exercise(
     db: AsyncSession = Depends(get_db),
 ):
     """Update an exercise (partial)."""
+    app_cache.invalidate_prefix("exercises:")
     result = await db.execute(select(Exercise).where(Exercise.id == exercise_id))
     exercise = result.scalar_one_or_none()
     if not exercise:
@@ -94,6 +104,7 @@ async def delete_exercise(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete an exercise."""
+    app_cache.invalidate_prefix("exercises:")
     result = await db.execute(select(Exercise).where(Exercise.id == exercise_id))
     exercise = result.scalar_one_or_none()
     if not exercise:

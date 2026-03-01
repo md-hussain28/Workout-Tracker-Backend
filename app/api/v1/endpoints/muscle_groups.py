@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import app_cache
 from app.db.session import get_db
 from app.models.muscle_group import MuscleGroup
 from app.schemas.muscle_group import MuscleGroupCreate, MuscleGroupRead, MuscleGroupUpdate, MuscleGroupStats
@@ -21,11 +22,18 @@ async def list_muscle_groups(
     skip: int = 0,
     limit: int = 200,
 ):
-    """List all muscle groups (for Primary/Secondary/Tertiary linking)."""
+    """List all muscle groups (for Primary/Secondary/Tertiary linking). Cached 5 min."""
+    cache_key = f"muscle_groups:{skip}:{limit}"
+    cached = app_cache.get(cache_key)
+    if cached is not None:
+        return [MuscleGroupRead.model_validate(d) for d in cached]
+
     result = await db.execute(
         select(MuscleGroup).order_by(MuscleGroup.name).offset(skip).limit(limit)
     )
-    return list(result.scalars().all())
+    items = list(result.scalars().all())
+    app_cache.set(cache_key, [MuscleGroupRead.model_validate(mg).model_dump(mode="json") for mg in items])
+    return items
 
 
 @router.post("", response_model=MuscleGroupRead, status_code=201)
@@ -34,6 +42,8 @@ async def create_muscle_group(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a custom muscle group."""
+    app_cache.invalidate_prefix("muscle_groups:")
+    app_cache.invalidate_prefix("exercises:")  # exercises embed muscle groups
     existing = await db.execute(select(MuscleGroup).where(MuscleGroup.name == payload.name))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Muscle group with this name already exists")
@@ -64,6 +74,8 @@ async def update_muscle_group(
     db: AsyncSession = Depends(get_db),
 ):
     """Update a muscle group."""
+    app_cache.invalidate_prefix("muscle_groups:")
+    app_cache.invalidate_prefix("exercises:")  # exercises embed muscle groups
     result = await db.execute(select(MuscleGroup).where(MuscleGroup.id == muscle_group_id))
     mg = result.scalar_one_or_none()
     if not mg:
@@ -81,6 +93,8 @@ async def delete_muscle_group(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a muscle group (exercises' FKs set to NULL)."""
+    app_cache.invalidate_prefix("muscle_groups:")
+    app_cache.invalidate_prefix("exercises:")  # exercises embed muscle groups
     result = await db.execute(select(MuscleGroup).where(MuscleGroup.id == muscle_group_id))
     mg = result.scalar_one_or_none()
     if not mg:
