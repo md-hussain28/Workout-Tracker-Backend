@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.v1.endpoints.body import USER_ID, get_weight_at_date, get_weights_for_dates
+from app.models.body_log import BodyLog
 from app.db.session import get_db
 from app.models.exercise import Exercise
 from app.models.workout import Workout, WorkoutSet
@@ -589,9 +590,22 @@ async def calories_history(
         return []
 
     # Single batch query for weights for all workout dates (avoids N+1)
-    weight_at_date = await get_weights_for_dates(
-        db, USER_ID, [w.started_at for w in workouts if w.started_at]
-    )
+    workout_dates = [w.started_at for w in workouts if w.started_at]
+    weight_at_date = await get_weights_for_dates(db, USER_ID, workout_dates)
+
+    # Fallback: if any workout date has no weight, use latest weight ever so we still show data
+    missing = [d for d in workout_dates if weight_at_date.get(d.date().isoformat()) is None]
+    if missing:
+        latest_result = await db.execute(
+            select(BodyLog.weight_kg)
+            .where(BodyLog.user_id == USER_ID)
+            .order_by(BodyLog.created_at.desc())
+            .limit(1)
+        )
+        fallback_kg = latest_result.scalar_one_or_none()
+        if fallback_kg is not None:
+            for d in missing:
+                weight_at_date[d.date().isoformat()] = float(fallback_kg)
 
     daily_calories: dict[str, float] = {}
     for w in workouts:

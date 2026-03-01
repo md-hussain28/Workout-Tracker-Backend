@@ -55,19 +55,24 @@ def calc_bmr(weight_kg: float, height_cm: float, age: int, sex: str) -> float:
     return round(base + 5 if sex == "male" else base - 161, 1)
 
 
-# U.S. Navy / Army body fat formulas use INCHES and POUNDS.
+# U.S. Navy / Army body fat formulas expect circumferences in INCHES.
+# Army 2024 (PMC11026907) uses abdomen in inches and weight in KG.
 CM_TO_IN = 1.0 / 2.54
-KG_TO_LB = 2.20462
 
-# Plausible body fat % range; clamp all formulas to avoid unit/input errors.
+# Plausible body fat % range. Do NOT clamp invalid (e.g. negative) to min — return None so UI shows "—".
 BF_PCT_MIN = 2.0
 BF_PCT_MAX = 60.0
+
+# Minimum plausible waist circumference in cm (avoid using neck/wrist as waist).
+WAIST_CM_MIN = 45.0
 
 
 def _clamp_bf(pct: float | None) -> float | None:
     if pct is None:
         return None
-    return round(max(BF_PCT_MIN, min(BF_PCT_MAX, pct)), 1)
+    if pct < BF_PCT_MIN:
+        return None  # Invalid/implausible (e.g. wrong units or wrong body part) — don't show misleading 2%
+    return round(min(BF_PCT_MAX, pct), 1)
 
 
 def calc_navy_bf(
@@ -77,9 +82,11 @@ def calc_navy_bf(
     neck_cm: float,
     hips_cm: Optional[float] = None,
 ) -> Optional[float]:
-    """U.S. Navy body fat % formula. Inputs in cm; converted to inches for formula."""
-    if waist_cm is None or neck_cm is None or waist_cm <= neck_cm or height_cm <= 0:
+    """U.S. Navy body fat % formula. Waist at navel, neck below Adam's apple; all in cm, converted to inches."""
+    if waist_cm is None or neck_cm is None or height_cm <= 0:
         return None
+    if waist_cm <= neck_cm or waist_cm < WAIST_CM_MIN:
+        return None  # Waist must be > neck and plausibly waist (not neck/wrist in cm)
     try:
         waist_in = waist_cm * CM_TO_IN
         neck_in = neck_cm * CM_TO_IN
@@ -124,18 +131,16 @@ def calc_army_bf(
     waist_cm: Optional[float] = None,
     hips_cm: Optional[float] = None,
 ) -> Optional[float]:
-    """U.S. Army 2024 one-site formula. Uses abdomen (waist) in INCHES and weight in POUNDS."""
-    if weight_kg <= 0 or not waist_cm:
+    """U.S. Army 2024 one-site formula (PMC11026907). Abdomen at navel in INCHES; weight in KG."""
+    if weight_kg <= 0 or not waist_cm or waist_cm < WAIST_CM_MIN:
         return None
-    # 2024 Army: one-site (abdominal circumference) + weight. All in inches and pounds.
     abdomen_in = waist_cm * CM_TO_IN
-    weight_lb = weight_kg * KG_TO_LB
     if sex == "male":
-        # Males: % = -26.97 - (0.12 × weight_lb) + (1.99 × abdomen_in)
-        bf = -26.97 - (0.12 * weight_lb) + (1.99 * abdomen_in)
+        # Male 1-site MM without height: %BF = -27.05 + 2.06*abdomen_in - 0.12*weight_kg
+        bf = -27.05 + (2.06 * abdomen_in) - (0.12 * weight_kg)
     else:
-        # Females: % = -9.15 - (0.015 × weight_lb) + (1.27 × abdomen_in)
-        bf = -9.15 - (0.015 * weight_lb) + (1.27 * abdomen_in)
+        # Female 1-site MM without height: %BF = -8.06 + 1.25*abdomen_in - 0.004*weight_kg
+        bf = -8.06 + (1.25 * abdomen_in) - (0.004 * weight_kg)
     return _clamp_bf(bf)
 
 
@@ -165,9 +170,9 @@ def calc_cun_bae_bf(
 def calc_rfm_bf(
     sex: str, height_cm: float, waist_cm: Optional[float] = None
 ) -> Optional[float]:
-    """Relative Fat Mass (RFM). Height and waist in same units (cm); ratio is unit-invariant."""
-    if height_cm <= 0 or not waist_cm or waist_cm <= 0:
-        return None
+    """Relative Fat Mass (RFM). Height and waist in cm; waist at navel."""
+    if height_cm <= 0 or not waist_cm or waist_cm <= 0 or waist_cm < WAIST_CM_MIN:
+        return None  # Avoid using neck/wrist as waist
     if sex == "male":
         bf = 64 - (20 * height_cm / waist_cm)
     else:
@@ -183,8 +188,10 @@ def calc_multi_girth_bf(
     chest_cm: Optional[float] = None,
     hips_cm: Optional[float] = None,
 ) -> Optional[float]:
-    """Multi-girth proxy: waist/chest/hip in INCHES (formula coefficients expect ~30–40 range)."""
+    """Multi-girth proxy: waist/chest/hip in cm, converted to inches for formula."""
     if height_cm <= 0 or weight_kg <= 0 or not waist_cm or not chest_cm or not hips_cm:
+        return None
+    if waist_cm < WAIST_CM_MIN:
         return None
     height_m = height_cm / 100
     bmi = weight_kg / (height_m**2)

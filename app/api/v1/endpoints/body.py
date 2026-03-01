@@ -71,7 +71,8 @@ async def get_weights_for_dates(
     """
     if not at_dates:
         return {}
-    lo = min(at_dates) - timedelta(days=1)
+    # Include weights from well before the first date so "latest on or before" finds a match
+    lo = min(at_dates) - timedelta(days=365)
     hi = max(at_dates) + timedelta(days=1)
     result = await db.execute(
         select(BodyLog.created_at, BodyLog.weight_kg)

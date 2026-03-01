@@ -93,13 +93,15 @@ async def exercise_stats(
             for row in label_result.all()
         ]
 
-        # Daily progression in one query: group by date, aggregate 1rm/volume/weight
+        # Daily progression in one query: group by date, aggregate 1rm/volume/weight/sets/reps
         progression_result = await db.execute(
             select(
                 func.date(Workout.started_at).label("d"),
                 func.max(_brzycki_1rm_expr(WorkoutSet.weight, WorkoutSet.reps)).label("best_1rm"),
                 func.sum(WorkoutSet.weight * WorkoutSet.reps).label("volume"),
                 func.max(WorkoutSet.weight).label("max_weight"),
+                func.count(WorkoutSet.id).label("sets_count"),
+                func.sum(WorkoutSet.reps).label("total_reps"),
             )
             .join(Workout, Workout.id == WorkoutSet.workout_id)
             .where(
@@ -123,6 +125,14 @@ async def exercise_stats(
         max_weight_history = [
             {"date": (r.d.isoformat() if hasattr(r.d, "isoformat") else str(r.d)), "weight": float(r.max_weight or 0)}
             for r in daily_rows if r.max_weight and float(r.max_weight) > 0
+        ]
+        sets_reps_history = [
+            {
+                "date": r.d.isoformat() if hasattr(r.d, "isoformat") else str(r.d),
+                "sets": int(r.sets_count or 0),
+                "reps": int(r.total_reps or 0),
+            }
+            for r in daily_rows
         ]
 
         # Recent history – one query: subquery for last 10 workout IDs, then their sets for this exercise
@@ -181,6 +191,7 @@ async def exercise_stats(
             "one_rm_progression": one_rm_progression,
             "volume_history": volume_history,
             "max_weight_history": max_weight_history,
+            "sets_reps_history": sets_reps_history,
             "recent_history": recent_history,
         }
     except Exception as e:

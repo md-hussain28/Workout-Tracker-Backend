@@ -134,17 +134,8 @@ async def get_workout(
             )
             estimated_calories = round(cal)
 
-    # Order sets so newest-added exercise appears first when grouped: by each exercise's
-    # first set created_at desc, then set_order within exercise.
-    exercise_first_created = {}
-    for s in workout.sets:
-        ex_id = s.exercise_id
-        if ex_id not in exercise_first_created or s.created_at < exercise_first_created[ex_id]:
-            exercise_first_created[ex_id] = s.created_at
-    sorted_sets = sorted(
-        workout.sets,
-        key=lambda s: (-exercise_first_created[s.exercise_id].timestamp(), s.set_order),
-    )
+    # Order sets by set_order then id (stable order per exercise).
+    sorted_sets = sorted(workout.sets, key=lambda s: (s.set_order, str(s.id)))
 
     return WorkoutReadWithSets(
         id=workout.id,
