@@ -42,9 +42,15 @@ class BodyLogCreate(BaseModel):
     measurements: Optional[dict[str, float]] = Field(
         None,
         description=(
-            "Body circumferences in cm. Keys: chest, waist, hips, neck, shoulder, "
-            "bicep_l, bicep_r, forearm_l, forearm_r, thigh_l, thigh_r, calf_l, calf_r, wrist, ankle"
+            "Body circumferences. Keys: chest, waist, hips, neck, shoulder, "
+            "bicep_l, bicep_r, forearm_l, forearm_r, thigh_l, thigh_r, calf_l, calf_r, wrist, ankle. "
+            "Use measurement_unit to specify if values are in inches (converted to cm before storing)."
         ),
+    )
+    measurement_unit: Optional[str] = Field(
+        None,
+        pattern="^(in|cm)$",
+        description="Unit of measurements: 'in' (inches) or 'cm' (default). When 'in', values are converted to cm.",
     )
 
 
@@ -52,6 +58,7 @@ class BodyLogUpdate(BaseModel):
     weight_kg: Optional[float] = Field(None, gt=20, lt=400)
     body_fat_pct: Optional[float] = Field(None, ge=2, le=60)
     measurements: Optional[dict[str, float]] = None
+    measurement_unit: Optional[str] = Field(None, pattern="^(in|cm)$")
     created_at: Optional[datetime] = Field(None, description="Override the entry date")
 
 

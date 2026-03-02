@@ -170,13 +170,16 @@ async def create_body_log(payload: BodyLogCreate, db: AsyncSession = Depends(get
             )
         weight = last_weight
 
+    # Store measurements as-is (inches). body_analytics converts to cm for formulas.
+    measurements = payload.measurements
+
     # Run all calculations in-memory
     stats = compute_all_stats(
         weight_kg=weight,
         height_cm=bio.height_cm,
         age=bio.age,
         sex=bio.sex,
-        measurements=payload.measurements,
+        measurements=measurements,
         manual_bf=payload.body_fat_pct,
     )
 
@@ -184,7 +187,7 @@ async def create_body_log(payload: BodyLogCreate, db: AsyncSession = Depends(get
         user_id=USER_ID,
         weight_kg=weight,
         body_fat_pct=stats.get("bf_navy") or payload.body_fat_pct,
-        measurements=payload.measurements,
+        measurements=measurements,
         computed_stats=stats,
     )
     db.add(log)
@@ -298,7 +301,7 @@ async def update_body_log(log_id: uuid.UUID, payload: BodyLogUpdate, db: AsyncSe
     if payload.body_fat_pct is not None:
         log.body_fat_pct = payload.body_fat_pct
     if payload.measurements is not None:
-        # Merge: keep existing keys, overwrite provided ones
+        # Store as-is (inches). body_analytics converts for formulas.
         existing = log.measurements or {}
         existing.update(payload.measurements)
         log.measurements = existing

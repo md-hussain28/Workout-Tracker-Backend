@@ -12,10 +12,11 @@ from typing import Any, Optional
 from app.core.nhanes_data import NHANES_STATS, PAIRED_KEYS, get_population_stats
 
 
+IN_TO_CM = 2.54
+
+
 def _normalize_measurements(measurements: dict[str, float]) -> dict[str, float]:
-    """Lowercase keys and map formula aliases so logged data matches equation inputs.
-    E.g. abdomen -> waist, hip -> hips (formula uses waist/hips/weight).
-    """
+    """Lowercase keys, map aliases. Measurements are in inches — convert to cm for formulas."""
     out: dict[str, float] = {}
     for k, v in measurements.items():
         if v is None:
@@ -24,11 +25,12 @@ def _normalize_measurements(measurements: dict[str, float]) -> dict[str, float]:
             out[k.lower().strip()] = float(v)
         except (TypeError, ValueError):
             continue
-    # Map common aliases to canonical keys used by formulas
     if "abdomen" in out and "waist" not in out:
         out["waist"] = out["abdomen"]
     if "hip" in out and "hips" not in out:
         out["hips"] = out["hip"]
+
+    out = {k: round(v * IN_TO_CM, 1) for k, v in out.items()}
     return out
 
 
@@ -64,7 +66,8 @@ BF_PCT_MIN = 2.0
 BF_PCT_MAX = 60.0
 
 # Minimum plausible waist circumference in cm (avoid using neck/wrist as waist).
-WAIST_CM_MIN = 45.0
+# 30 cm excludes wrist (~15–20 cm) while allowing small waists; use "in" unit if measuring in inches.
+WAIST_CM_MIN = 30.0
 
 
 def _clamp_bf(pct: float | None) -> float | None:
